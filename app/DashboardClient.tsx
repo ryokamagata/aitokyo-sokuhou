@@ -165,9 +165,9 @@ export default function DashboardClient() {
               <MiniKpi label="合計新規人数" value={`${data.newCustomers.toLocaleString()}人`} valueColor="text-emerald-400" />
               <MiniKpi label="合計新規 着地予測" value={`${data.newCustomerForecast.toLocaleString()}人`} valueColor="text-cyan-400" />
               <MiniKpi label="今月客単価" value={formatYen(data.avgSpend)} />
-              <MiniKpi label="合計総客数" value={`${data.totalCustomers.toLocaleString()}人`} sub={`着地予測: ${data.customerForecast.toLocaleString()}人`} />
-              <MiniKpi label="合計指名客数" value={`${data.nominated.toLocaleString()}人`} sub={`着地予測: ${data.nominatedForecast.toLocaleString()}人`} />
-              <MiniKpi label="合計フリー客数" value={`${data.freeVisit.toLocaleString()}人`} sub={`着地予測: ${data.freeVisitForecast.toLocaleString()}人`} />
+              <MiniKpiWithForecast label="合計総客数" value={data.totalCustomers} forecast={data.customerForecast} />
+              <MiniKpiWithForecast label="合計指名客数" value={data.nominated} forecast={data.nominatedForecast} />
+              <MiniKpiWithForecast label="合計フリー客数" value={data.freeVisit} forecast={data.freeVisitForecast} />
               <MiniKpi
                 label="指名率"
                 value={`${data.nominationRate}%`}
@@ -256,6 +256,16 @@ function MiniKpi({ label, value, sub, valueColor = 'text-white' }: { label: stri
       <p className="text-xs text-gray-400 mb-1">{label}</p>
       <p className={`text-lg font-bold ${valueColor}`}>{value}</p>
       {sub && <p className="text-xs text-gray-500 mt-0.5">{sub}</p>}
+    </div>
+  )
+}
+
+function MiniKpiWithForecast({ label, value, forecast }: { label: string; value: number; forecast: number }) {
+  return (
+    <div className="bg-gray-900/50 rounded-lg p-3">
+      <p className="text-xs text-gray-400 mb-1">{label}</p>
+      <p className="text-lg font-bold text-white">{value.toLocaleString()}人</p>
+      <p className="text-sm font-semibold text-cyan-400 mt-0.5">着地: {forecast.toLocaleString()}人</p>
     </div>
   )
 }
