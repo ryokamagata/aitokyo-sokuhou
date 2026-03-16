@@ -1,0 +1,14 @@
+{
+  "version": 1,
+  "processes": [
+    {
+      "label": "AITOKYO Dashboard (Next.js)",
+      "type": "shell",
+      "command": "npm run dev",
+      "cwd": "/Users/kamagataryo/claud code/aitokyo-dashboard",
+      "env": {},
+      "port": 3000,
+      "readyPattern": "Local:\\s+http://localhost:"
+    }
+  ]
+}
