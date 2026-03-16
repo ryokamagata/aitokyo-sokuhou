@@ -2,6 +2,7 @@ import Database from 'better-sqlite3'
 import path from 'path'
 import fs from 'fs'
 import type { BMRow } from './types'
+import type { AnalysisType } from './analysisTypes'
 
 const DB_PATH =
   process.env.DB_PATH ??
@@ -87,6 +88,20 @@ function runMigrations(db: Database.Database) {
       error          TEXT,
       scraped_at     TEXT NOT NULL DEFAULT (datetime('now'))
     );
+
+    CREATE TABLE IF NOT EXISTS analysis_data (
+      id             INTEGER PRIMARY KEY AUTOINCREMENT,
+      analysis_type  TEXT NOT NULL,
+      bm_code        TEXT NOT NULL,
+      store          TEXT NOT NULL,
+      period_start   TEXT NOT NULL,
+      period_end     TEXT NOT NULL,
+      data_json      TEXT NOT NULL,
+      scraped_at     TEXT NOT NULL DEFAULT (datetime('now')),
+      UNIQUE(analysis_type, bm_code, period_start, period_end)
+    );
+    CREATE INDEX IF NOT EXISTS idx_analysis_type_store ON analysis_data(analysis_type, bm_code);
+    CREATE INDEX IF NOT EXISTS idx_analysis_period ON analysis_data(period_start, period_end);
   `)
 }
 
@@ -204,6 +219,63 @@ export function logScrape(storesScraped: number, recordsStored: number, error?: 
     recordsStored,
     error ?? null
   )
+}
+
+// ─── Analysis data functions ─────────────────────────────────────────────────
+
+export function upsertAnalysisData(
+  analysisType: AnalysisType,
+  bmCode: string,
+  store: string,
+  periodStart: string,
+  periodEnd: string,
+  dataJson: string
+): void {
+  const db = getDB()
+  db.prepare(`
+    INSERT INTO analysis_data(analysis_type, bm_code, store, period_start, period_end, data_json)
+    VALUES(?, ?, ?, ?, ?, ?)
+    ON CONFLICT(analysis_type, bm_code, period_start, period_end)
+    DO UPDATE SET store=excluded.store, data_json=excluded.data_json, scraped_at=datetime('now')
+  `).run(analysisType, bmCode, store, periodStart, periodEnd, dataJson)
+}
+
+export function getAnalysisData(
+  analysisType: AnalysisType,
+  year: number,
+  month: number,
+  bmCode?: string
+) {
+  const db = getDB()
+  const prefix = `${year}-${String(month).padStart(2, '0')}`
+
+  if (bmCode) {
+    return db.prepare(
+      `SELECT * FROM analysis_data
+       WHERE analysis_type=? AND bm_code=? AND period_start LIKE ?
+       ORDER BY scraped_at DESC LIMIT 1`
+    ).get(analysisType, bmCode, `${prefix}%`) as {
+      analysis_type: string; bm_code: string; store: string
+      period_start: string; period_end: string; data_json: string; scraped_at: string
+    } | undefined
+  }
+
+  return db.prepare(
+    `SELECT * FROM analysis_data
+     WHERE analysis_type=? AND period_start LIKE ?
+     ORDER BY store ASC`
+  ).all(analysisType, `${prefix}%`) as {
+    analysis_type: string; bm_code: string; store: string
+    period_start: string; period_end: string; data_json: string; scraped_at: string
+  }[]
+}
+
+export function getAllAnalysisTypes(year: number, month: number): string[] {
+  const db = getDB()
+  const prefix = `${year}-${String(month).padStart(2, '0')}`
+  return (db.prepare(
+    `SELECT DISTINCT analysis_type FROM analysis_data WHERE period_start LIKE ? ORDER BY analysis_type`
+  ).all(`${prefix}%`) as { analysis_type: string }[]).map(r => r.analysis_type)
 }
 
 // ─── CSV import functions ────────────────────────────────────────────────────

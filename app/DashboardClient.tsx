@@ -8,6 +8,7 @@ import StoreBreakdown from '@/components/StoreBreakdown'
 import StaffBreakdown from '@/components/StaffBreakdown'
 import TargetInput from '@/components/TargetInput'
 import UploadZone from '@/components/UploadZone'
+import AnalyticsTabs from './AnalyticsTabs'
 import type { DashboardData } from '@/lib/types'
 
 const CONFIDENCE_LABEL = { high: '高', medium: '中', low: '低' } as const
@@ -17,6 +18,7 @@ export default function DashboardClient() {
   const [data, setData] = useState<DashboardData | null>(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
+  const [mainTab, setMainTab] = useState<'overview' | 'analytics'>('overview')
 
   const refresh = useCallback(async () => {
     try {
@@ -62,7 +64,7 @@ export default function DashboardClient() {
         <div>
           <div className="flex items-center gap-3">
             <h1 className="text-xl font-bold text-white">
-              AITOKYO 売上ダッシュボード
+              AITOKYO ダッシュボード
             </h1>
             <button
               onClick={async () => {
@@ -81,108 +83,140 @@ export default function DashboardClient() {
             )}
           </p>
         </div>
-        <TargetInput
-          year={data.year}
-          month={data.month}
-          currentTarget={data.monthlyTarget}
-          onSaved={refresh}
-        />
-      </div>
-
-      {/* KPI カード */}
-      <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
-        <KpiCard
-          label="累計売上"
-          value={formatYen(data.totalSales)}
-          sub={`${data.today}日分`}
-        />
-        <KpiCard
-          label="月末予測"
-          value={formatYen(data.forecast.forecastTotal)}
-          sub={`予測精度: ${CONFIDENCE_LABEL[data.forecast.confidence]}`}
-          subColor={
-            data.forecast.confidence === 'high'
-              ? 'text-green-400'
-              : data.forecast.confidence === 'medium'
-              ? 'text-yellow-400'
-              : 'text-gray-400'
-          }
-        />
-        <KpiCard
-          label="達成率"
-          value={data.achievementRate != null ? `${data.achievementRate}%` : '—'}
-          sub={data.monthlyTarget ? `目標 ${formatYen(data.monthlyTarget)}` : '目標未設定'}
-          valueColor={
-            data.achievementRate != null
-              ? data.achievementRate >= 100
-                ? 'text-green-400'
-                : data.achievementRate >= 80
-                ? 'text-blue-400'
-                : data.achievementRate >= 60
-                ? 'text-yellow-400'
-                : 'text-red-400'
-              : 'text-gray-400'
-          }
-        />
-        <KpiCard
-          label="残り日数"
-          value={`${data.daysInMonth - data.today}日`}
-          sub={`${data.daysInMonth}日中 ${data.today}日経過`}
-        />
-      </div>
-
-      {/* 進捗ゲージ */}
-      {data.monthlyTarget && data.monthlyTarget > 0 && (
-        <div className="bg-gray-800 rounded-xl p-4">
-          <ProgressGauge
-            actual={data.totalSales}
-            target={data.monthlyTarget}
-            forecast={data.forecast.forecastTotal}
-          />
-        </div>
-      )}
-
-      {/* 売上推移チャート */}
-      <div className="bg-gray-800 rounded-xl p-4">
-        <h2 className="text-sm font-medium text-gray-300 mb-3">日別売上推移</h2>
-        {noData ? (
-          <EmptyState />
-        ) : (
-          <SalesChart
-            dailyData={data.dailyData}
-            monthlyTarget={data.monthlyTarget}
-            daysInMonth={data.daysInMonth}
-            forecast={data.forecast}
+        {mainTab === 'overview' && (
+          <TargetInput
+            year={data.year}
+            month={data.month}
+            currentTarget={data.monthlyTarget}
+            onSaved={refresh}
           />
         )}
       </div>
 
-      {/* 店舗別 / スタッフ別 */}
-      <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-        <div className="bg-gray-800 rounded-xl p-4">
-          <h2 className="text-sm font-medium text-gray-300 mb-3">店舗別売上</h2>
-          <StoreBreakdown data={data.storeBreakdown} total={data.totalSales} />
-        </div>
-        <div className="bg-gray-800 rounded-xl p-4">
-          <h2 className="text-sm font-medium text-gray-300 mb-3">スタッフ別売上</h2>
-          <StaffBreakdown data={data.staffBreakdown} total={data.totalSales} />
-        </div>
+      {/* メインタブ切替 */}
+      <div className="flex gap-2 border-b border-gray-700 pb-0">
+        <button
+          onClick={() => setMainTab('overview')}
+          className={`px-4 py-2 text-sm font-medium border-b-2 transition-colors -mb-[1px] ${
+            mainTab === 'overview'
+              ? 'border-blue-500 text-blue-400'
+              : 'border-transparent text-gray-400 hover:text-gray-200'
+          }`}
+        >
+          売上概要
+        </button>
+        <button
+          onClick={() => setMainTab('analytics')}
+          className={`px-4 py-2 text-sm font-medium border-b-2 transition-colors -mb-[1px] ${
+            mainTab === 'analytics'
+              ? 'border-blue-500 text-blue-400'
+              : 'border-transparent text-gray-400 hover:text-gray-200'
+          }`}
+        >
+          BM分析
+        </button>
       </div>
 
-      {/* BM データ同期 */}
-      <div className="bg-gray-800 rounded-xl p-4">
-        <h2 className="text-sm font-medium text-gray-300 mb-3">BM データ同期</h2>
-        <ScrapeZone onSuccess={refresh} lastUpdated={data.lastUpdated} />
-      </div>
+      {mainTab === 'overview' ? (
+        <>
+          {/* KPI カード */}
+          <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+            <KpiCard
+              label="累計売上"
+              value={formatYen(data.totalSales)}
+              sub={`${data.today}日分`}
+            />
+            <KpiCard
+              label="月末予測"
+              value={formatYen(data.forecast.forecastTotal)}
+              sub={`予測精度: ${CONFIDENCE_LABEL[data.forecast.confidence]}`}
+              subColor={
+                data.forecast.confidence === 'high'
+                  ? 'text-green-400'
+                  : data.forecast.confidence === 'medium'
+                  ? 'text-yellow-400'
+                  : 'text-gray-400'
+              }
+            />
+            <KpiCard
+              label="達成率"
+              value={data.achievementRate != null ? `${data.achievementRate}%` : '—'}
+              sub={data.monthlyTarget ? `目標 ${formatYen(data.monthlyTarget)}` : '目標未設定'}
+              valueColor={
+                data.achievementRate != null
+                  ? data.achievementRate >= 100
+                    ? 'text-green-400'
+                    : data.achievementRate >= 80
+                    ? 'text-blue-400'
+                    : data.achievementRate >= 60
+                    ? 'text-yellow-400'
+                    : 'text-red-400'
+                  : 'text-gray-400'
+              }
+            />
+            <KpiCard
+              label="残り日数"
+              value={`${data.daysInMonth - data.today}日`}
+              sub={`${data.daysInMonth}日中 ${data.today}日経過`}
+            />
+          </div>
 
-      {/* CSV 取込（サブ手段） */}
-      <div className="bg-gray-800 rounded-xl p-4">
-        <h2 className="text-sm font-medium text-gray-300 mb-3">CSV 手動取込</h2>
-        <UploadZone onSuccess={refresh} />
-        <p className="text-xs text-gray-600 mt-2">
-          ビューティーメリットからエクスポートしたCSVファイルをアップロードしてください
-        </p>
-      </div>
+          {/* 進捗ゲージ */}
+          {data.monthlyTarget && data.monthlyTarget > 0 && (
+            <div className="bg-gray-800 rounded-xl p-4">
+              <ProgressGauge
+                actual={data.totalSales}
+                target={data.monthlyTarget}
+                forecast={data.forecast.forecastTotal}
+              />
+            </div>
+          )}
+
+          {/* 売上推移チャート */}
+          <div className="bg-gray-800 rounded-xl p-4">
+            <h2 className="text-sm font-medium text-gray-300 mb-3">日別売上推移</h2>
+            {noData ? (
+              <EmptyState />
+            ) : (
+              <SalesChart
+                dailyData={data.dailyData}
+                monthlyTarget={data.monthlyTarget}
+                daysInMonth={data.daysInMonth}
+                forecast={data.forecast}
+              />
+            )}
+          </div>
+
+          {/* 店舗別 / スタッフ別 */}
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+            <div className="bg-gray-800 rounded-xl p-4">
+              <h2 className="text-sm font-medium text-gray-300 mb-3">店舗別売上</h2>
+              <StoreBreakdown data={data.storeBreakdown} total={data.totalSales} />
+            </div>
+            <div className="bg-gray-800 rounded-xl p-4">
+              <h2 className="text-sm font-medium text-gray-300 mb-3">スタッフ別売上</h2>
+              <StaffBreakdown data={data.staffBreakdown} total={data.totalSales} />
+            </div>
+          </div>
+
+          {/* BM データ同期 */}
+          <div className="bg-gray-800 rounded-xl p-4">
+            <h2 className="text-sm font-medium text-gray-300 mb-3">BM データ同期</h2>
+            <ScrapeZone onSuccess={refresh} lastUpdated={data.lastUpdated} />
+          </div>
+
+          {/* CSV 取込（サブ手段） */}
+          <div className="bg-gray-800 rounded-xl p-4">
+            <h2 className="text-sm font-medium text-gray-300 mb-3">CSV 手動取込</h2>
+            <UploadZone onSuccess={refresh} />
+            <p className="text-xs text-gray-600 mt-2">
+              ビューティーメリットからエクスポートしたCSVファイルをアップロードしてください
+            </p>
+          </div>
+        </>
+      ) : (
+        <AnalyticsTabs year={data.year} month={data.month} />
+      )}
     </main>
   )
 }

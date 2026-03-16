@@ -2,23 +2,15 @@ import * as cheerio from 'cheerio'
 import {
   upsertStoreDailySales,
   upsertStaffSales,
+  upsertAnalysisData,
 } from './db'
+import { ANALYSIS_TYPES, type AnalysisType } from './analysisTypes'
+import { parseAnalysisHTML } from './analysisParser'
+import { STORES } from './stores'
+
+export { STORES }
 
 const BM_BASE = 'https://b-merit.jp'
-
-const STORES = [
-  { name: 'AI TOKYO 渋谷',              bm_code: '69110375' },
-  { name: 'AI TOKYO Rita',              bm_code: '11780846' },
-  { name: 'AI TOKYO S',                 bm_code: '12479835' },
-  { name: 'AI TOKYO 名古屋栄',           bm_code: '28162229' },
-  { name: "AI TOKYO men's 横浜",        bm_code: '31132259' },
-  { name: "AI TOKYO Ciel men's 横浜",   bm_code: '27468498' },
-  { name: "AI TOKYO men's 下北沢",      bm_code: '46641695' },
-  { name: "AI TOKYO men's 池袋",        bm_code: '63811270' },
-  { name: 'ams by AI TOKYO',            bm_code: '94303402' },
-  { name: 'AI TOKYO 名古屋 2nd',        bm_code: '65211838' },
-  { name: 'AITOKYO + Sea店 横浜',       bm_code: '73245379' },
-]
 
 // ─── Cookie management ────────────────────────────────────────────────────────
 
@@ -254,4 +246,92 @@ export async function scrapeAllStores(
   }
 
   return { storesScraped, recordsStored, errors }
+}
+
+// ─── Analysis page scraping ─────────────────────────────────────────────────
+
+async function fetchAnalysisPage(
+  cookies: Cookies,
+  type: AnalysisType,
+  startDate: string,
+  endDate: string
+): Promise<string> {
+  // 分析ページURL: /manage/analysis/{type}
+  // フォーム送信パラメータ
+  const params = new URLSearchParams({
+    aggregate_type: 'daily',
+    start_date: startDate,
+    end_date: endDate,
+    submit: '集計',
+  })
+  const url = `${BM_BASE}/manage/analysis/${type}?${params.toString()}`
+  const res = await fetch(url, { headers: { Cookie: cookieHeader(cookies) } })
+  if (!res.ok) throw new Error(`HTTP ${res.status} for analysis/${type}`)
+  return res.text()
+}
+
+export interface AnalysisScrapeResult {
+  storesScraped: number
+  typesScraped: number
+  errors: string[]
+}
+
+export async function scrapeAllAnalysis(
+  year: number,
+  month: number,
+  today: number,
+  types?: AnalysisType[]
+): Promise<AnalysisScrapeResult> {
+  const mm = String(month).padStart(2, '0')
+  const dd = String(today).padStart(2, '0')
+  const startDate = `${year}-${mm}-01`
+  const endDate = `${year}-${mm}-${dd}`
+  const targetTypes = types ?? Array.from(ANALYSIS_TYPES)
+
+  const groupCookies = await loginGroup()
+
+  let storesScraped = 0
+  let typesScraped = 0
+  const errors: string[] = []
+
+  for (const store of STORES) {
+    try {
+      const storeCookies = await loginStore(groupCookies, store.bm_code)
+      let storeTypesOk = 0
+
+      for (const type of targetTypes) {
+        try {
+          const html = await fetchAnalysisPage(storeCookies, type, startDate, endDate)
+          const parsed = parseAnalysisHTML(type, html)
+
+          upsertAnalysisData(
+            type,
+            store.bm_code,
+            store.name,
+            startDate,
+            endDate,
+            JSON.stringify(parsed)
+          )
+          storeTypesOk++
+
+          // 300ms delay between pages
+          await new Promise((r) => setTimeout(r, 300))
+        } catch (e) {
+          errors.push(`${store.name}/${type}: ${e instanceof Error ? e.message : String(e)}`)
+        }
+      }
+
+      if (storeTypesOk > 0) {
+        storesScraped++
+        typesScraped += storeTypesOk
+      }
+
+      // 500ms delay between stores
+      await new Promise((r) => setTimeout(r, 500))
+    } catch (e) {
+      errors.push(`${store.name}: ${e instanceof Error ? e.message : String(e)}`)
+    }
+  }
+
+  return { storesScraped, typesScraped, errors }
 }
