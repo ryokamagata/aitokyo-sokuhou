@@ -9,7 +9,6 @@ import StaffBreakdown from '@/components/StaffBreakdown'
 import TargetInput from '@/components/TargetInput'
 import UploadZone from '@/components/UploadZone'
 import ScrapeButton from '@/components/ScrapeButton'
-import AnalyticsTabs from './AnalyticsTabs'
 import type { DashboardData } from '@/lib/types'
 
 const CONFIDENCE_LABEL = { high: '高', medium: '中', low: '低' } as const
@@ -19,7 +18,6 @@ export default function DashboardClient() {
   const [data, setData] = useState<DashboardData | null>(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
-  const [mainTab, setMainTab] = useState<'overview' | 'analytics'>('overview')
 
   const refresh = useCallback(async () => {
     try {
@@ -84,43 +82,15 @@ export default function DashboardClient() {
             )}
           </p>
         </div>
-        {mainTab === 'overview' && (
-          <TargetInput
+        <TargetInput
             year={data.year}
             month={data.month}
             currentTarget={data.monthlyTarget}
             onSaved={refresh}
           />
-        )}
       </div>
 
-      {/* メインタブ切替 */}
-      <div className="flex gap-2 border-b border-gray-700 pb-0">
-        <button
-          onClick={() => setMainTab('overview')}
-          className={`px-4 py-2 text-sm font-medium border-b-2 transition-colors -mb-[1px] ${
-            mainTab === 'overview'
-              ? 'border-blue-500 text-blue-400'
-              : 'border-transparent text-gray-400 hover:text-gray-200'
-          }`}
-        >
-          売上概要
-        </button>
-        <button
-          onClick={() => setMainTab('analytics')}
-          className={`px-4 py-2 text-sm font-medium border-b-2 transition-colors -mb-[1px] ${
-            mainTab === 'analytics'
-              ? 'border-blue-500 text-blue-400'
-              : 'border-transparent text-gray-400 hover:text-gray-200'
-          }`}
-        >
-          BM分析
-        </button>
-      </div>
-
-      {mainTab === 'overview' ? (
-        <>
-          {/* KPI カード */}
+      {/* KPI カード */}
           <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
             <KpiCard
               label="累計売上"
@@ -188,6 +158,36 @@ export default function DashboardClient() {
             )}
           </div>
 
+          {/* 顧客KPI */}
+          <div className="bg-gray-800 rounded-xl p-4">
+            <h2 className="text-sm font-medium text-gray-300 mb-3">顧客分析</h2>
+            <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+              <MiniKpi label="新規人数" value={`${data.newCustomers.toLocaleString()}人`} />
+              <MiniKpi label="新規 着地予測" value={`${data.newCustomerForecast.toLocaleString()}人`} />
+              <MiniKpi label="客単価" value={formatYen(data.avgSpend)} />
+              <MiniKpi label="総客数" value={`${data.totalCustomers.toLocaleString()}人`} />
+              <MiniKpi label="指名客数" value={`${data.nominated.toLocaleString()}人`} />
+              <MiniKpi label="フリー客数" value={`${data.freeVisit.toLocaleString()}人`} />
+              <MiniKpi
+                label="指名率"
+                value={`${data.nominationRate}%`}
+                valueColor={parseFloat(data.nominationRate) >= 85 ? 'text-green-400' : parseFloat(data.nominationRate) >= 70 ? 'text-blue-400' : 'text-yellow-400'}
+              />
+              <MiniKpi
+                label="リピート率"
+                value={`${data.repeatRate}%`}
+                valueColor={parseFloat(data.repeatRate) >= 60 ? 'text-green-400' : parseFloat(data.repeatRate) >= 40 ? 'text-blue-400' : 'text-yellow-400'}
+              />
+              <MiniKpi label="総顧客数" value={`${data.totalUsers.toLocaleString()}人`} />
+              <MiniKpi label="アプリ会員数" value={`${data.appMembers.toLocaleString()}人`} />
+              <MiniKpi
+                label="アプリ会員率"
+                value={`${data.appMemberRate}%`}
+                valueColor={parseFloat(data.appMemberRate) >= 50 ? 'text-green-400' : parseFloat(data.appMemberRate) >= 30 ? 'text-blue-400' : 'text-yellow-400'}
+              />
+            </div>
+          </div>
+
           {/* 店舗別 / スタッフ別 */}
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
             <div className="bg-gray-800 rounded-xl p-4">
@@ -219,10 +219,6 @@ export default function DashboardClient() {
               ビューティーメリットからエクスポートしたCSVファイルをアップロードしてください
             </p>
           </div>
-        </>
-      ) : (
-        <AnalyticsTabs year={data.year} month={data.month} />
-      )}
     </main>
   )
 }
@@ -245,6 +241,15 @@ function KpiCard({
       <p className="text-xs text-gray-400 mb-1">{label}</p>
       <p className={`text-xl font-bold ${valueColor}`}>{value}</p>
       {sub && <p className={`text-xs mt-0.5 ${subColor}`}>{sub}</p>}
+    </div>
+  )
+}
+
+function MiniKpi({ label, value, valueColor = 'text-white' }: { label: string; value: string; valueColor?: string }) {
+  return (
+    <div className="bg-gray-900/50 rounded-lg p-3">
+      <p className="text-xs text-gray-400 mb-1">{label}</p>
+      <p className={`text-lg font-bold ${valueColor}`}>{value}</p>
     </div>
   )
 }

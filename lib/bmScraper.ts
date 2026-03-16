@@ -2,10 +2,9 @@ import * as cheerio from 'cheerio'
 import {
   upsertStoreDailySales,
   upsertStaffSales,
-  upsertAnalysisData,
+  upsertMonthlyVisitors,
+  upsertMonthlyUsers,
 } from './db'
-import { ANALYSIS_TYPES, type AnalysisType } from './analysisTypes'
-import { parseAnalysisHTML } from './analysisParser'
 import { STORES } from './stores'
 
 export { STORES }
@@ -169,6 +168,128 @@ function parseStaffHTML(html: string): { staff: string; sales: number }[] {
   return results
 }
 
+// ─── BM Analysis page fetch helper ───────────────────────────────────────────
+
+function buildAnalysisParams(startDate: string, endDate: string): URLSearchParams {
+  const [sy, sm] = startDate.split('-')
+  const [ey, em] = endDate.split('-')
+  return new URLSearchParams({
+    periodType: '0',
+    startDay: startDate,
+    endDay: endDate,
+    startYear: sy,
+    startMonth: String(parseInt(sm)),
+    endYear: ey,
+    endMonth: String(parseInt(em)),
+    shopUserId: '',
+  })
+}
+
+async function fetchAnalysisPage(
+  cookies: Cookies,
+  type: string,
+  startDate: string,
+  endDate: string
+): Promise<string> {
+  const params = buildAnalysisParams(startDate, endDate)
+  const url = `${BM_BASE}/manage/analysis/${type}?${params.toString()}`
+  const { response } = await fetchFollowRedirects(url, {}, cookies)
+  if (!response.ok) throw new Error(`HTTP ${response.status} for ${type}`)
+  return response.text()
+}
+
+// ─── Visitor parsing ─────────────────────────────────────────────────────────
+
+interface VisitorResult {
+  daily: Map<string, number>  // date → new_customers (for per-day tracking)
+  totals: { nominated: number; free_visit: number; new_customers: number; revisit: number; fixed: number; re_return: number }
+}
+
+function parseVisitorHTML(html: string): VisitorResult {
+  const $ = cheerio.load(html)
+  const daily = new Map<string, number>()
+  const totals = { nominated: 0, free_visit: 0, new_customers: 0, revisit: 0, fixed: 0, re_return: 0 }
+
+  $('table').each((_, table) => {
+    const headerCells = $(table).find('thead th, thead td, tr:first-child th, tr:first-child td')
+    const headers = headerCells.map((__, el) => $(el).text().trim()).get()
+
+    const idx = (name: string) => headers.findIndex(h => h.includes(name))
+    const nominatedIdx = idx('指名件数')
+    const freeIdx = idx('フリー件数')
+    const newIdx = idx('新規')
+    const revisitIdx = idx('再来')
+    const fixedIdx = idx('固定')
+    const reReturnIdx = idx('リターン')
+
+    if (newIdx === -1) return // not the right table
+
+    const num = (cells: string[], i: number) =>
+      i >= 0 && i < cells.length ? (parseInt((cells[i] || '0').replace(/[^0-9]/g, '')) || 0) : 0
+
+    const allRows = $(table).find('tbody tr, tr')
+    allRows.each((__, tr) => {
+      const cells = $(tr).find('td').map((___, td) => $(td).text().trim()).get()
+      if (cells.length <= newIdx) return
+
+      // 合計 row → extract totals
+      if (/合計/.test(cells[0] || '')) {
+        totals.nominated = num(cells, nominatedIdx)
+        totals.free_visit = num(cells, freeIdx)
+        totals.new_customers = num(cells, newIdx)
+        totals.revisit = num(cells, revisitIdx)
+        totals.fixed = num(cells, fixedIdx)
+        totals.re_return = num(cells, reReturnIdx)
+        return
+      }
+
+      // Per-day rows → extract new_customers
+      const dateMatch = cells[0]?.match(/(\d{4}-\d{2}-\d{2})/)
+      if (dateMatch) {
+        daily.set(dateMatch[1], num(cells, newIdx))
+      }
+    })
+
+    if (daily.size > 0 || totals.new_customers > 0) return false // break
+  })
+
+  return { daily, totals }
+}
+
+// ─── User (顧客) parsing ─────────────────────────────────────────────────────
+
+function parseUserHTML(html: string): { totalUsers: number; appMembers: number } {
+  const $ = cheerio.load(html)
+  let totalUsers = 0, appMembers = 0
+
+  $('table').each((_, table) => {
+    const headerCells = $(table).find('thead th, thead td, tr:first-child th, tr:first-child td')
+    const headers = headerCells.map((__, el) => $(el).text().trim()).get()
+
+    const kokyakuIdx = headers.findIndex(h => h.includes('顧客数'))
+    const appIdx = headers.findIndex(h => h.includes('アプリ会員数'))
+    if (kokyakuIdx === -1) return
+
+    // Use last data row (latest date)
+    const rows = $(table).find('tbody tr, tr')
+    let lastCells: string[] = []
+    rows.each((__, tr) => {
+      const cells = $(tr).find('td').map((___, td) => $(td).text().trim()).get()
+      if (cells.length > kokyakuIdx && cells[0] && !/合計/.test(cells[0])) {
+        lastCells = cells
+      }
+    })
+
+    if (lastCells.length > 0) {
+      totalUsers = parseInt((lastCells[kokyakuIdx] || '0').replace(/[^0-9]/g, '')) || 0
+      appMembers = appIdx >= 0 ? (parseInt((lastCells[appIdx] || '0').replace(/[^0-9]/g, '')) || 0) : 0
+      return false // break
+    }
+  })
+
+  return { totalUsers, appMembers }
+}
+
 // ─── Analysis fetch ───────────────────────────────────────────────────────────
 
 async function fetchAnalysis(
@@ -235,9 +356,39 @@ export async function scrapeAllStores(
       // Daily sales
       const dailyHtml = await fetchAnalysis(storeCookies, 'date', startDate, endDate)
       const dailyRows = parseDailyHTML(dailyHtml)
+
+      // Visitor (来店客分析)
+      let newCustomerMap = new Map<string, number>()
+      try {
+        const visitorHtml = await fetchAnalysisPage(storeCookies, 'visitor', startDate, endDate)
+        const visitorResult = parseVisitorHTML(visitorHtml)
+        newCustomerMap = visitorResult.daily
+        upsertMonthlyVisitors(year, month, store.name, store.bm_code, visitorResult.totals)
+        await new Promise((r) => setTimeout(r, 300))
+      } catch {
+        // visitor page failure is non-fatal
+      }
+
+      // User (顧客分析)
+      try {
+        const userHtml = await fetchAnalysisPage(storeCookies, 'user', startDate, endDate)
+        const userResult = parseUserHTML(userHtml)
+        if (userResult.totalUsers > 0) {
+          upsertMonthlyUsers(year, month, store.name, store.bm_code, userResult.totalUsers, userResult.appMembers)
+        }
+        await new Promise((r) => setTimeout(r, 300))
+      } catch {
+        // user page failure is non-fatal
+      }
+
       if (dailyRows.length > 0) {
         recordsStored += upsertStoreDailySales(
-          dailyRows.map((r) => ({ ...r, store: store.name, bm_code: store.bm_code }))
+          dailyRows.map((r) => ({
+            ...r,
+            store: store.name,
+            bm_code: store.bm_code,
+            new_customers: newCustomerMap.get(r.date) ?? 0,
+          }))
         )
       }
 
@@ -261,140 +412,3 @@ export async function scrapeAllStores(
   return { storesScraped, recordsStored, errors }
 }
 
-// ─── Analysis page scraping ─────────────────────────────────────────────────
-
-async function fetchAnalysisPage(
-  cookies: Cookies,
-  type: AnalysisType,
-  startDate: string,
-  endDate: string
-): Promise<string> {
-  // BM分析ページは GET フォーム送信
-  // 正しいパラメータ名: periodType, startDay, endDay, startYear, startMonth, endYear, endMonth
-  const startParts = startDate.split('-')
-  const endParts = endDate.split('-')
-  const params = new URLSearchParams({
-    periodType: '0', // 0=daily
-    startDay: startDate,
-    endDay: endDate,
-    startYear: startParts[0],
-    startMonth: String(parseInt(startParts[1])),
-    endYear: endParts[0],
-    endMonth: String(parseInt(endParts[1])),
-    shopUserId: '', // 全スタッフ
-  })
-  // account ページは追加パラメータあり
-  if (type === 'account') {
-    params.set('shopUserType', '0')
-    params.set('routeId', '')
-  }
-  const url = `${BM_BASE}/manage/analysis/${type}?${params.toString()}`
-  const { response } = await fetchFollowRedirects(url, {}, cookies)
-  if (!response.ok) throw new Error(`HTTP ${response.status} for analysis/${type}`)
-  return response.text()
-}
-
-/** パース結果が空（データなし）かどうかを判定 */
-function isEmptyResult(parsed: object): boolean {
-  const p = parsed as Record<string, unknown>
-  // channels/staff/menus/products/categories/tables/daily 配列が全て空
-  for (const key of ['channels', 'staff', 'menus', 'products', 'categories', 'tables', 'daily']) {
-    if (Array.isArray(p[key]) && (p[key] as unknown[]).length > 0) return false
-  }
-  // summary の pureSales/totalCustomers が 0 より大きければデータあり
-  if (p.summary && typeof p.summary === 'object') {
-    const s = p.summary as Record<string, number>
-    if ((s.pureSales || 0) > 0 || (s.totalCustomers || 0) > 0) return false
-  }
-  // total が 0 より大きければデータあり (reserve)
-  if (typeof p.total === 'number' && p.total > 0) return false
-  return true
-}
-
-export interface AnalysisScrapeResult {
-  storesScraped: number
-  typesScraped: number
-  errors: string[]
-}
-
-export async function scrapeAllAnalysis(
-  year: number,
-  month: number,
-  today: number,
-  types?: AnalysisType[],
-  onProgress?: (p: ScrapeProgress) => void
-): Promise<AnalysisScrapeResult> {
-  const mm = String(month).padStart(2, '0')
-  const dd = String(today).padStart(2, '0')
-  const startDate = `${year}-${mm}-01`
-  const endDate = `${year}-${mm}-${dd}`
-  const targetTypes = types ?? Array.from(ANALYSIS_TYPES)
-  const totalPages = STORES.length * targetTypes.length
-
-  onProgress?.({ phase: 'login', current: 0, total: totalPages, detail: 'BMにログイン中...' })
-  const groupCookies = await loginGroup()
-
-  let storesScraped = 0
-  let typesScraped = 0
-  let pagesDone = 0
-  const errors: string[] = []
-
-  for (let si = 0; si < STORES.length; si++) {
-    const store = STORES[si]
-    try {
-      const storeCookies = await loginStore(groupCookies, store.bm_code)
-      let storeTypesOk = 0
-
-      for (let ti = 0; ti < targetTypes.length; ti++) {
-        const type = targetTypes[ti]
-        pagesDone++
-        onProgress?.({
-          phase: 'scraping',
-          current: pagesDone,
-          total: totalPages,
-          storeName: store.name,
-          detail: `${store.name} - ${type}`,
-        })
-        try {
-          const html = await fetchAnalysisPage(storeCookies, type, startDate, endDate)
-          const parsed = parseAnalysisHTML(type, html)
-
-          // Validate: skip if parsed result is empty
-          if (isEmptyResult(parsed)) {
-            errors.push(`${store.name}/${type}: パースデータが空です`)
-          } else {
-            upsertAnalysisData(
-              type,
-              store.bm_code,
-              store.name,
-              startDate,
-              endDate,
-              JSON.stringify(parsed)
-            )
-            storeTypesOk++
-          }
-
-          // 300ms delay between pages
-          await new Promise((r) => setTimeout(r, 300))
-        } catch (e) {
-          errors.push(`${store.name}/${type}: ${e instanceof Error ? e.message : String(e)}`)
-        }
-      }
-
-      if (storeTypesOk > 0) {
-        storesScraped++
-        typesScraped += storeTypesOk
-      }
-
-      // 500ms delay between stores
-      await new Promise((r) => setTimeout(r, 500))
-    } catch (e) {
-      // Store login failed - skip all types for this store
-      pagesDone = (si + 1) * targetTypes.length
-      errors.push(`${store.name}: ${e instanceof Error ? e.message : String(e)}`)
-    }
-  }
-
-  onProgress?.({ phase: 'done', current: totalPages, total: totalPages, detail: '完了' })
-  return { storesScraped, typesScraped, errors }
-}

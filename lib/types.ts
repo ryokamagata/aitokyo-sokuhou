@@ -14,6 +14,7 @@ export type DailySales = {
   dayOfWeek: number  // 0=日, 1=月, ..., 6=土
   totalAmount: number
   customers: number
+  newCustomers?: number
   stores: Record<string, number>  // 店舗名 → 売上
   staff: Record<string, number>   // スタッフ名 → 売上
 }
@@ -42,4 +43,16 @@ export type DashboardData = {
   staffBreakdown: { staff: string; sales: number }[]
   dailyData: { date: string; sales: number; cumulative: number }[]
   lastUpdated: string
+  // 顧客KPI
+  totalCustomers: number      // 総客数(今月来店)
+  avgSpend: number             // 客単価
+  newCustomers: number         // 新規人数
+  newCustomerForecast: number  // 新規着地予測
+  nominated: number            // 指名客数
+  freeVisit: number            // フリー客数
+  nominationRate: string       // 指名率(%)
+  repeatRate: string           // リピート率(%)
+  totalUsers: number           // 総顧客数(登録)
+  appMembers: number           // アプリ会員数
+  appMemberRate: string        // アプリ会員率(%)
 }

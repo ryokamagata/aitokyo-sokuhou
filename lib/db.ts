@@ -2,7 +2,6 @@ import Database from 'better-sqlite3'
 import path from 'path'
 import fs from 'fs'
 import type { BMRow } from './types'
-import type { AnalysisType } from './analysisTypes'
 
 const DB_PATH =
   process.env.DB_PATH ??
@@ -89,19 +88,46 @@ function runMigrations(db: Database.Database) {
       scraped_at     TEXT NOT NULL DEFAULT (datetime('now'))
     );
 
-    CREATE TABLE IF NOT EXISTS analysis_data (
-      id             INTEGER PRIMARY KEY AUTOINCREMENT,
-      analysis_type  TEXT NOT NULL,
-      bm_code        TEXT NOT NULL,
-      store          TEXT NOT NULL,
-      period_start   TEXT NOT NULL,
-      period_end     TEXT NOT NULL,
-      data_json      TEXT NOT NULL,
-      scraped_at     TEXT NOT NULL DEFAULT (datetime('now')),
-      UNIQUE(analysis_type, bm_code, period_start, period_end)
+  `)
+
+  // Migration: add new_customers column
+  const cols = db.prepare("PRAGMA table_info(store_daily_sales)").all() as { name: string }[]
+  if (!cols.some(c => c.name === 'new_customers')) {
+    db.exec('ALTER TABLE store_daily_sales ADD COLUMN new_customers INTEGER NOT NULL DEFAULT 0')
+  }
+
+  // 来店客月次集計テーブル
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS store_monthly_visitors (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      year INTEGER NOT NULL,
+      month INTEGER NOT NULL,
+      store TEXT NOT NULL,
+      bm_code TEXT NOT NULL,
+      nominated INTEGER NOT NULL DEFAULT 0,
+      free_visit INTEGER NOT NULL DEFAULT 0,
+      new_customers INTEGER NOT NULL DEFAULT 0,
+      revisit INTEGER NOT NULL DEFAULT 0,
+      fixed INTEGER NOT NULL DEFAULT 0,
+      re_return INTEGER NOT NULL DEFAULT 0,
+      scraped_at TEXT NOT NULL DEFAULT (datetime('now')),
+      UNIQUE(year, month, bm_code)
     );
-    CREATE INDEX IF NOT EXISTS idx_analysis_type_store ON analysis_data(analysis_type, bm_code);
-    CREATE INDEX IF NOT EXISTS idx_analysis_period ON analysis_data(period_start, period_end);
+  `)
+
+  // 顧客月次集計テーブル
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS store_monthly_users (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      year INTEGER NOT NULL,
+      month INTEGER NOT NULL,
+      store TEXT NOT NULL,
+      bm_code TEXT NOT NULL,
+      total_users INTEGER NOT NULL DEFAULT 0,
+      app_members INTEGER NOT NULL DEFAULT 0,
+      scraped_at TEXT NOT NULL DEFAULT (datetime('now')),
+      UNIQUE(year, month, bm_code)
+    );
   `)
 }
 
@@ -138,18 +164,18 @@ export function setTarget(year: number, month: number, target: number) {
 // ─── Scraped data functions ─────────────────────────────────────────────────
 
 export function upsertStoreDailySales(
-  records: { date: string; store: string; bm_code: string; sales: number; customers: number }[]
+  records: { date: string; store: string; bm_code: string; sales: number; customers: number; new_customers?: number }[]
 ): number {
   const db = getDB()
   const upsert = db.prepare(`
-    INSERT INTO store_daily_sales(date, store, bm_code, sales, customers)
-    VALUES(@date, @store, @bm_code, @sales, @customers)
+    INSERT INTO store_daily_sales(date, store, bm_code, sales, customers, new_customers)
+    VALUES(@date, @store, @bm_code, @sales, @customers, @new_customers)
     ON CONFLICT(date, bm_code) DO UPDATE SET
       store=excluded.store, sales=excluded.sales,
-      customers=excluded.customers, scraped_at=datetime('now')
+      customers=excluded.customers, new_customers=excluded.new_customers, scraped_at=datetime('now')
   `)
   const run = db.transaction(() => {
-    for (const r of records) upsert.run(r)
+    for (const r of records) upsert.run({ ...r, new_customers: r.new_customers ?? 0 })
     return records.length
   })
   return run()
@@ -177,10 +203,10 @@ export function getScrapedDailySales(year: number, month: number) {
   const prefix = `${year}-${String(month).padStart(2, '0')}`
   return db
     .prepare(
-      `SELECT date, SUM(sales) as sales, SUM(customers) as customers
+      `SELECT date, SUM(sales) as sales, SUM(customers) as customers, SUM(new_customers) as new_customers
        FROM store_daily_sales WHERE date LIKE ? GROUP BY date ORDER BY date ASC`
     )
-    .all(`${prefix}-%`) as { date: string; sales: number; customers: number }[]
+    .all(`${prefix}-%`) as { date: string; sales: number; customers: number; new_customers: number }[]
 }
 
 export function getScrapedStoreSales(year: number, month: number) {
@@ -221,61 +247,56 @@ export function logScrape(storesScraped: number, recordsStored: number, error?: 
   )
 }
 
-// ─── Analysis data functions ─────────────────────────────────────────────────
+// ─── Visitor / User stats functions ──────────────────────────────────────────
 
-export function upsertAnalysisData(
-  analysisType: AnalysisType,
-  bmCode: string,
-  store: string,
-  periodStart: string,
-  periodEnd: string,
-  dataJson: string
+export function upsertMonthlyVisitors(
+  year: number, month: number, store: string, bmCode: string,
+  data: { nominated: number; free_visit: number; new_customers: number; revisit: number; fixed: number; re_return: number }
 ): void {
   const db = getDB()
   db.prepare(`
-    INSERT INTO analysis_data(analysis_type, bm_code, store, period_start, period_end, data_json)
-    VALUES(?, ?, ?, ?, ?, ?)
-    ON CONFLICT(analysis_type, bm_code, period_start, period_end)
-    DO UPDATE SET store=excluded.store, data_json=excluded.data_json, scraped_at=datetime('now')
-  `).run(analysisType, bmCode, store, periodStart, periodEnd, dataJson)
+    INSERT INTO store_monthly_visitors(year, month, store, bm_code, nominated, free_visit, new_customers, revisit, fixed, re_return)
+    VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    ON CONFLICT(year, month, bm_code) DO UPDATE SET
+      store=excluded.store, nominated=excluded.nominated, free_visit=excluded.free_visit,
+      new_customers=excluded.new_customers, revisit=excluded.revisit, fixed=excluded.fixed,
+      re_return=excluded.re_return, scraped_at=datetime('now')
+  `).run(year, month, store, bmCode, data.nominated, data.free_visit, data.new_customers, data.revisit, data.fixed, data.re_return)
 }
 
-export function getAnalysisData(
-  analysisType: AnalysisType,
-  year: number,
-  month: number,
-  bmCode?: string
-) {
+export function getMonthlyVisitors(year: number, month: number) {
   const db = getDB()
-  const prefix = `${year}-${String(month).padStart(2, '0')}`
-
-  if (bmCode) {
-    return db.prepare(
-      `SELECT * FROM analysis_data
-       WHERE analysis_type=? AND bm_code=? AND period_start LIKE ?
-       ORDER BY scraped_at DESC LIMIT 1`
-    ).get(analysisType, bmCode, `${prefix}%`) as {
-      analysis_type: string; bm_code: string; store: string
-      period_start: string; period_end: string; data_json: string; scraped_at: string
-    } | undefined
-  }
-
   return db.prepare(
-    `SELECT * FROM analysis_data
-     WHERE analysis_type=? AND period_start LIKE ?
-     ORDER BY store ASC`
-  ).all(analysisType, `${prefix}%`) as {
-    analysis_type: string; bm_code: string; store: string
-    period_start: string; period_end: string; data_json: string; scraped_at: string
-  }[]
+    `SELECT SUM(nominated) as nominated, SUM(free_visit) as free_visit,
+            SUM(new_customers) as new_customers, SUM(revisit) as revisit,
+            SUM(fixed) as fixed, SUM(re_return) as re_return
+     FROM store_monthly_visitors WHERE year=? AND month=?`
+  ).get(year, month) as {
+    nominated: number; free_visit: number; new_customers: number
+    revisit: number; fixed: number; re_return: number
+  } | undefined
 }
 
-export function getAllAnalysisTypes(year: number, month: number): string[] {
+export function upsertMonthlyUsers(
+  year: number, month: number, store: string, bmCode: string,
+  totalUsers: number, appMembers: number
+): void {
   const db = getDB()
-  const prefix = `${year}-${String(month).padStart(2, '0')}`
-  return (db.prepare(
-    `SELECT DISTINCT analysis_type FROM analysis_data WHERE period_start LIKE ? ORDER BY analysis_type`
-  ).all(`${prefix}%`) as { analysis_type: string }[]).map(r => r.analysis_type)
+  db.prepare(`
+    INSERT INTO store_monthly_users(year, month, store, bm_code, total_users, app_members)
+    VALUES(?, ?, ?, ?, ?, ?)
+    ON CONFLICT(year, month, bm_code) DO UPDATE SET
+      store=excluded.store, total_users=excluded.total_users,
+      app_members=excluded.app_members, scraped_at=datetime('now')
+  `).run(year, month, store, bmCode, totalUsers, appMembers)
+}
+
+export function getMonthlyUsers(year: number, month: number) {
+  const db = getDB()
+  return db.prepare(
+    `SELECT SUM(total_users) as total_users, SUM(app_members) as app_members
+     FROM store_monthly_users WHERE year=? AND month=?`
+  ).get(year, month) as { total_users: number; app_members: number } | undefined
 }
 
 // ─── CSV import functions ────────────────────────────────────────────────────
