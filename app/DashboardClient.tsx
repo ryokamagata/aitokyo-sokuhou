@@ -174,9 +174,14 @@ export default function DashboardClient() {
                 valueColor={parseFloat(data.nominationRate) >= 85 ? 'text-green-400' : parseFloat(data.nominationRate) >= 70 ? 'text-blue-400' : 'text-yellow-400'}
               />
               <MiniKpi
-                label="リピート率"
-                value={`${data.repeatRate}%`}
-                valueColor={parseFloat(data.repeatRate) >= 60 ? 'text-green-400' : parseFloat(data.repeatRate) >= 40 ? 'text-blue-400' : 'text-yellow-400'}
+                label="新規率"
+                value={`${data.newCustomerRate}%`}
+                valueColor={parseFloat(data.newCustomerRate) >= 40 ? 'text-green-400' : parseFloat(data.newCustomerRate) >= 20 ? 'text-blue-400' : 'text-yellow-400'}
+              />
+              <MiniKpi
+                label="新規3ヶ月リターン率"
+                value={`${data.newReturn3mRate}%`}
+                valueColor={parseFloat(data.newReturn3mRate) >= 40 ? 'text-green-400' : parseFloat(data.newReturn3mRate) >= 20 ? 'text-blue-400' : 'text-yellow-400'}
               />
               <MiniKpi label="総顧客数" value={`${data.totalUsers.toLocaleString()}人`} />
               <MiniKpi label="アプリ会員数" value={`${data.appMembers.toLocaleString()}人`} />

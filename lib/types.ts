@@ -51,7 +51,8 @@ export type DashboardData = {
   nominated: number            // 指名客数
   freeVisit: number            // フリー客数
   nominationRate: string       // 指名率(%)
-  repeatRate: string           // リピート率(%)
+  newCustomerRate: string      // 新規率(%)
+  newReturn3mRate: string      // 新規3ヶ月リターン率(%)
   totalUsers: number           // 総顧客数(登録)
   appMembers: number           // アプリ会員数
   appMemberRate: string        // アプリ会員率(%)

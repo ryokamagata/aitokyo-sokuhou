@@ -129,6 +129,21 @@ function runMigrations(db: Database.Database) {
       UNIQUE(year, month, bm_code)
     );
   `)
+
+  // サイクル分析テーブル（新規3ヶ月リターン率など）
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS store_monthly_cycle (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      year INTEGER NOT NULL,
+      month INTEGER NOT NULL,
+      store TEXT NOT NULL,
+      bm_code TEXT NOT NULL,
+      avg_cycle REAL NOT NULL DEFAULT 0,
+      new_return_3m REAL NOT NULL DEFAULT 0,
+      scraped_at TEXT NOT NULL DEFAULT (datetime('now')),
+      UNIQUE(year, month, bm_code)
+    );
+  `)
 }
 
 export function getSalesForMonth(year: number, month: number) {
@@ -316,6 +331,30 @@ export function getPerStoreUsers(year: number, month: number) {
     `SELECT store, bm_code, total_users, app_members
      FROM store_monthly_users WHERE year=? AND month=?`
   ).all(year, month) as { store: string; bm_code: string; total_users: number; app_members: number }[]
+}
+
+// ─── Cycle (サイクル分析) functions ──────────────────────────────────────────
+
+export function upsertMonthlyCycle(
+  year: number, month: number, store: string, bmCode: string,
+  avgCycle: number, newReturn3m: number
+): void {
+  const db = getDB()
+  db.prepare(`
+    INSERT INTO store_monthly_cycle(year, month, store, bm_code, avg_cycle, new_return_3m)
+    VALUES(?, ?, ?, ?, ?, ?)
+    ON CONFLICT(year, month, bm_code) DO UPDATE SET
+      store=excluded.store, avg_cycle=excluded.avg_cycle,
+      new_return_3m=excluded.new_return_3m, scraped_at=datetime('now')
+  `).run(year, month, store, bmCode, avgCycle, newReturn3m)
+}
+
+export function getPerStoreCycle(year: number, month: number) {
+  const db = getDB()
+  return db.prepare(
+    `SELECT store, bm_code, avg_cycle, new_return_3m
+     FROM store_monthly_cycle WHERE year=? AND month=?`
+  ).all(year, month) as { store: string; bm_code: string; avg_cycle: number; new_return_3m: number }[]
 }
 
 // ─── CSV import functions ────────────────────────────────────────────────────

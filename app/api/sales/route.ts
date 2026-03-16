@@ -8,6 +8,7 @@ import {
   getLastScrapeTime,
   getPerStoreVisitors,
   getPerStoreUsers,
+  getPerStoreCycle,
 } from '@/lib/db'
 import { computeForecast } from '@/lib/forecastEngine'
 import type { DailySales, DashboardData } from '@/lib/types'
@@ -126,11 +127,21 @@ export async function GET() {
     ? (nominationRates.reduce((s, r) => s + r, 0) / nominationRates.length).toFixed(1)
     : '0'
 
-  const repeatRates = visitorStores
-    .filter(v => (v.new_customers + v.revisit + v.fixed + v.re_return) > 0)
-    .map(v => ((v.revisit + v.fixed + v.re_return) / (v.new_customers + v.revisit + v.fixed + v.re_return)) * 100)
-  const repeatRate = repeatRates.length > 0
-    ? (repeatRates.reduce((s, r) => s + r, 0) / repeatRates.length).toFixed(1)
+  // 新規率 = 各店舗の (新規人数 / 総来店数) の平均
+  const newCustomerRates = visitorStores
+    .filter(v => (v.nominated + v.free_visit) > 0)
+    .map(v => (v.new_customers / (v.nominated + v.free_visit)) * 100)
+  const newCustomerRate = newCustomerRates.length > 0
+    ? (newCustomerRates.reduce((s, r) => s + r, 0) / newCustomerRates.length).toFixed(1)
+    : '0'
+
+  // サイクル分析データ (cycle) - 新規3ヶ月リターン率
+  const cycleStores = getPerStoreCycle(year, month)
+  const return3mRates = cycleStores
+    .filter(c => c.new_return_3m > 0)
+    .map(c => c.new_return_3m)
+  const newReturn3mRate = return3mRates.length > 0
+    ? (return3mRates.reduce((s, r) => s + r, 0) / return3mRates.length).toFixed(1)
     : '0'
 
   // 顧客データ (user) - 全店舗の個別データ取得
@@ -165,7 +176,8 @@ export async function GET() {
     nominated,
     freeVisit,
     nominationRate,
-    repeatRate,
+    newCustomerRate,
+    newReturn3mRate,
     totalUsers,
     appMembers,
     appMemberRate,
