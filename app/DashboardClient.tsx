@@ -1,6 +1,7 @@
 'use client'
 
 import { useCallback, useEffect, useState } from 'react'
+import { useRouter } from 'next/navigation'
 import SalesChart from '@/components/SalesChart'
 import ProgressGauge from '@/components/ProgressGauge'
 import StoreBreakdown from '@/components/StoreBreakdown'
@@ -12,6 +13,7 @@ import type { DashboardData } from '@/lib/types'
 const CONFIDENCE_LABEL = { high: '高', medium: '中', low: '低' } as const
 
 export default function DashboardClient() {
+  const router = useRouter()
   const [data, setData] = useState<DashboardData | null>(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
@@ -58,9 +60,20 @@ export default function DashboardClient() {
       {/* ヘッダー */}
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pt-2">
         <div>
-          <h1 className="text-xl font-bold text-white">
-            AITOKYO 売上ダッシュボード
-          </h1>
+          <div className="flex items-center gap-3">
+            <h1 className="text-xl font-bold text-white">
+              AITOKYO 売上ダッシュボード
+            </h1>
+            <button
+              onClick={async () => {
+                await fetch('/api/auth', { method: 'DELETE' })
+                router.push('/login')
+              }}
+              className="text-xs text-gray-500 hover:text-gray-300 transition-colors"
+            >
+              ログアウト
+            </button>
+          </div>
           <p className="text-gray-500 text-xs mt-0.5">
             {data.year}年{data.month}月 / {data.today}日時点
             {data.lastUpdated && (
