@@ -47,12 +47,12 @@ function cookiesFromResponse(res: Response): Cookies {
 
 function mergeCookies(base: Cookies, updates: Cookies): Cookies {
   const merged = new Map(base)
-  for (const [k, v] of updates) merged.set(k, v)
+  Array.from(updates.entries()).forEach(([k, v]) => merged.set(k, v))
   return merged
 }
 
 function cookieHeader(cookies: Cookies): string {
-  return [...cookies.values()].join('; ')
+  return Array.from(cookies.values()).join('; ')
 }
 
 // ─── Fetch helper with redirect chain + cookie forwarding ─────────────────────
