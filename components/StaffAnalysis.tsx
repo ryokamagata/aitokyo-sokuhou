@@ -15,7 +15,8 @@ export default function StaffAnalysis({ stores }: { stores: { store: string; dat
   // Merge all staff across stores
   const staffMap = new Map<string, { name: string; sales: number; customers: number; store: string }>()
   for (const s of stores) {
-    for (const st of s.data.staff) {
+    const staffList = Array.isArray(s.data?.staff) ? s.data.staff : []
+    for (const st of staffList) {
       const key = `${s.store}::${st.name}`
       staffMap.set(key, {
         name: st.name,

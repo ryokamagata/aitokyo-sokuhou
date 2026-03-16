@@ -15,7 +15,8 @@ export default function MenuAnalysis({ stores }: { stores: { store: string; data
   // Aggregate menus across stores
   const menuMap = new Map<string, { count: number; sales: number }>()
   for (const s of stores) {
-    for (const m of s.data.menus) {
+    const menuList = Array.isArray(s.data?.menus) ? s.data.menus : []
+    for (const m of menuList) {
       const prev = menuMap.get(m.name) || { count: 0, sales: 0 }
       menuMap.set(m.name, { count: prev.count + m.count, sales: prev.sales + m.sales })
     }

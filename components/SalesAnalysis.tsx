@@ -30,11 +30,12 @@ export default function SalesAnalysis({ stores }: { stores: { store: string; dat
     namedSales: 0, namedCount: 0, totalSales: 0,
   }
   for (const s of stores) {
-    agg.pureSales += s.data.summary.pureSales
-    agg.totalCustomers += s.data.summary.totalCustomers
-    agg.namedSales += s.data.summary.namedSales
-    agg.namedCount += s.data.summary.namedCount
-    agg.totalSales += s.data.summary.totalSales
+    const sum = s.data?.summary ?? { pureSales: 0, totalCustomers: 0, namedSales: 0, namedCount: 0, totalSales: 0 }
+    agg.pureSales += sum.pureSales || 0
+    agg.totalCustomers += sum.totalCustomers || 0
+    agg.namedSales += sum.namedSales || 0
+    agg.namedCount += sum.namedCount || 0
+    agg.totalSales += sum.totalSales || 0
   }
   agg.avgSpend = agg.totalCustomers > 0 ? Math.round(agg.pureSales / agg.totalCustomers) : 0
 
@@ -56,17 +57,16 @@ export default function SalesAnalysis({ stores }: { stores: { store: string; dat
           <h3 className="text-sm font-medium text-gray-300 mb-3">店舗別 売上</h3>
           <div className="space-y-2">
             {stores
-              .sort((a, b) => b.data.summary.pureSales - a.data.summary.pureSales)
+              .sort((a, b) => (b.data?.summary?.pureSales || 0) - (a.data?.summary?.pureSales || 0))
               .map((s) => {
-                const pct = agg.pureSales > 0
-                  ? (s.data.summary.pureSales / agg.pureSales) * 100
-                  : 0
+                const ps = s.data?.summary?.pureSales || 0
+                const pct = agg.pureSales > 0 ? (ps / agg.pureSales) * 100 : 0
                 return (
                   <div key={s.store}>
                     <div className="flex justify-between text-xs mb-1">
                       <span className="text-gray-300 truncate max-w-[55%]">{s.store}</span>
                       <span className="text-gray-400">
-                        ¥{s.data.summary.pureSales.toLocaleString()} ({pct.toFixed(1)}%)
+                        ¥{ps.toLocaleString()} ({pct.toFixed(1)}%)
                       </span>
                     </div>
                     <div className="h-2 bg-gray-700 rounded-full overflow-hidden">

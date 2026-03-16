@@ -31,7 +31,7 @@ export default function RepeatAnalysis({ stores }: { stores: { store: string; da
               <span className="text-gray-500 text-xs ml-2">({s.data.baseMonth})</span>
             )}
           </h3>
-          {s.data.categories.length === 0 ? (
+          {(!Array.isArray(s.data?.categories) || s.data.categories.length === 0) ? (
             <p className="text-gray-500 text-xs">データなし</p>
           ) : (
             <div className="overflow-x-auto">

@@ -15,11 +15,12 @@ interface ReserveData {
 export default function ReserveAnalysis({ stores }: { stores: { store: string; data: ReserveData }[] }) {
   if (stores.length === 0) return <Empty />
 
-  // Aggregate across stores
+  // Aggregate across stores (defensive: channels may be missing/empty)
   const channelTotals: Record<string, number> = {}
   let grandTotal = 0
   for (const s of stores) {
-    for (const ch of s.data.channels) {
+    const chs = Array.isArray(s.data?.channels) ? s.data.channels : []
+    for (const ch of chs) {
       channelTotals[ch.name] = (channelTotals[ch.name] || 0) + ch.count
       grandTotal += ch.count
     }
@@ -59,7 +60,8 @@ export default function ReserveAnalysis({ stores }: { stores: { store: string; d
           <h3 className="text-sm font-medium text-gray-300 mb-3">店舗別 予約件数</h3>
           <div className="space-y-1.5 max-h-64 overflow-y-auto">
             {stores.map((s) => {
-              const total = s.data.channels.reduce((sum, ch) => sum + ch.count, 0)
+              const chs = Array.isArray(s.data?.channels) ? s.data.channels : []
+              const total = chs.reduce((sum: number, ch: { count: number }) => sum + ch.count, 0)
               return (
                 <div key={s.store} className="flex items-center gap-2 text-xs">
                   <span className="text-gray-300 truncate flex-1">{s.store}</span>

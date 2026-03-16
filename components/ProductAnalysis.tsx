@@ -15,7 +15,8 @@ export default function ProductAnalysis({ stores }: { stores: { store: string; d
   // Aggregate products across stores
   const productMap = new Map<string, { count: number; sales: number }>()
   for (const s of stores) {
-    for (const p of s.data.products) {
+    const prodList = Array.isArray(s.data?.products) ? s.data.products : []
+    for (const p of prodList) {
       const prev = productMap.get(p.name) || { count: 0, sales: 0 }
       productMap.set(p.name, { count: prev.count + p.count, sales: prev.sales + p.sales })
     }

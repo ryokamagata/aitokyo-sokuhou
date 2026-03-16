@@ -269,18 +269,46 @@ async function fetchAnalysisPage(
   startDate: string,
   endDate: string
 ): Promise<string> {
-  // 分析ページURL: /manage/analysis/{type}
-  // フォーム送信パラメータ
+  // BM分析ページは GET フォーム送信
+  // 正しいパラメータ名: periodType, startDay, endDay, startYear, startMonth, endYear, endMonth
+  const startParts = startDate.split('-')
+  const endParts = endDate.split('-')
   const params = new URLSearchParams({
-    aggregate_type: 'daily',
-    start_date: startDate,
-    end_date: endDate,
-    submit: '集計',
+    periodType: '0', // 0=daily
+    startDay: startDate,
+    endDay: endDate,
+    startYear: startParts[0],
+    startMonth: String(parseInt(startParts[1])),
+    endYear: endParts[0],
+    endMonth: String(parseInt(endParts[1])),
+    shopUserId: '', // 全スタッフ
   })
+  // account ページは追加パラメータあり
+  if (type === 'account') {
+    params.set('shopUserType', '0')
+    params.set('routeId', '')
+  }
   const url = `${BM_BASE}/manage/analysis/${type}?${params.toString()}`
-  const res = await fetch(url, { headers: { Cookie: cookieHeader(cookies) } })
-  if (!res.ok) throw new Error(`HTTP ${res.status} for analysis/${type}`)
-  return res.text()
+  const { response } = await fetchFollowRedirects(url, {}, cookies)
+  if (!response.ok) throw new Error(`HTTP ${response.status} for analysis/${type}`)
+  return response.text()
+}
+
+/** パース結果が空（データなし）かどうかを判定 */
+function isEmptyResult(parsed: object): boolean {
+  const p = parsed as Record<string, unknown>
+  // channels/staff/menus/products/categories/tables/daily 配列が全て空
+  for (const key of ['channels', 'staff', 'menus', 'products', 'categories', 'tables', 'daily']) {
+    if (Array.isArray(p[key]) && (p[key] as unknown[]).length > 0) return false
+  }
+  // summary の pureSales/totalCustomers が 0 より大きければデータあり
+  if (p.summary && typeof p.summary === 'object') {
+    const s = p.summary as Record<string, number>
+    if ((s.pureSales || 0) > 0 || (s.totalCustomers || 0) > 0) return false
+  }
+  // total が 0 より大きければデータあり (reserve)
+  if (typeof p.total === 'number' && p.total > 0) return false
+  return true
 }
 
 export interface AnalysisScrapeResult {
@@ -331,15 +359,20 @@ export async function scrapeAllAnalysis(
           const html = await fetchAnalysisPage(storeCookies, type, startDate, endDate)
           const parsed = parseAnalysisHTML(type, html)
 
-          upsertAnalysisData(
-            type,
-            store.bm_code,
-            store.name,
-            startDate,
-            endDate,
-            JSON.stringify(parsed)
-          )
-          storeTypesOk++
+          // Validate: skip if parsed result is empty
+          if (isEmptyResult(parsed)) {
+            errors.push(`${store.name}/${type}: パースデータが空です`)
+          } else {
+            upsertAnalysisData(
+              type,
+              store.bm_code,
+              store.name,
+              startDate,
+              endDate,
+              JSON.stringify(parsed)
+            )
+            storeTypesOk++
+          }
 
           // 300ms delay between pages
           await new Promise((r) => setTimeout(r, 300))
@@ -356,7 +389,8 @@ export async function scrapeAllAnalysis(
       // 500ms delay between stores
       await new Promise((r) => setTimeout(r, 500))
     } catch (e) {
-      pagesDone += targetTypes.length - (pagesDone % targetTypes.length === 0 ? 0 : pagesDone % targetTypes.length)
+      // Store login failed - skip all types for this store
+      pagesDone = (si + 1) * targetTypes.length
       errors.push(`${store.name}: ${e instanceof Error ? e.message : String(e)}`)
     }
   }
