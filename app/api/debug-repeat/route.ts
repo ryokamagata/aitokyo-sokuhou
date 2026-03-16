@@ -94,80 +94,87 @@ export async function GET() {
     const now = new Date(new Date().toLocaleString('en-US', { timeZone: 'Asia/Tokyo' }))
     const year = now.getFullYear()
     const month = now.getMonth() + 1
-    const today = now.getDate() - 1
-    const mm = String(month).padStart(2, '0')
-    const dd = String(today).padStart(2, '0')
-    const startDate = `${year}-${mm}-01`
-    const endDate = `${year}-${mm}-${dd}`
 
-    // Try multiple possible URLs for repeat/cycle analysis
-    const typesToTry = ['repeat', 'cycle', 'revisit', 'retention']
-    const results: Record<string, { status: number; htmlSnippet: string; tableCount: number; headers: string[][] }> = {}
+    // Repeat page: query 3 months ago so BM has enough data
+    const refMonth = month <= 3 ? month + 9 : month - 3
+    const refYear = month <= 3 ? year - 1 : year
 
-    for (const type of typesToTry) {
-      try {
-        const params = new URLSearchParams({
-          periodType: '0',
-          startDay: startDate,
-          endDay: endDate,
-          startYear: String(year),
-          startMonth: String(month),
-          endYear: String(year),
-          endMonth: String(month),
-          shopUserId: '',
-        })
-        const url = `${BM_BASE}/manage/analysis/${type}?${params.toString()}`
-        const { response } = await fetchFollowRedirects(url, {}, storeCookies)
-        const html = await response.text()
+    const cheerio = await import('cheerio')
 
-        // Parse tables
-        const cheerio = await import('cheerio')
-        const $ = cheerio.load(html)
-        const tables: string[][] = []
-        $('table').each((i, table) => {
-          const headers: string[] = []
-          $(table).find('thead tr').last().find('th, td').each((_, el) => {
-            headers.push($(el).text().trim())
-          })
-          if (headers.length === 0) {
-            $(table).find('tr').first().find('th, td').each((_, el) => {
-              headers.push($(el).text().trim())
-            })
-          }
-          tables.push(headers)
-        })
+    // Fetch repeat page with params for 3 months ago
+    const repeatParams = new URLSearchParams({
+      periodType: '0',
+      startDay: `${refYear}-${String(refMonth).padStart(2, '0')}-01`,
+      endDay: `${refYear}-${String(refMonth).padStart(2, '0')}-28`,
+      startYear: String(refYear),
+      startMonth: String(refMonth),
+      endYear: String(refYear),
+      endMonth: String(refMonth),
+      shopUserId: '',
+    })
+    const repeatUrl = `${BM_BASE}/manage/analysis/repeat?${repeatParams.toString()}`
+    const { response: repeatRes } = await fetchFollowRedirects(repeatUrl, {}, storeCookies)
+    const repeatHtml = await repeatRes.text()
 
-        // Get all text content from tables (first 3000 chars)
-        let allTableText = ''
-        $('table').each((i, table) => {
-          allTableText += `\n--- TABLE ${i} ---\n`
-          $(table).find('tr').each((_, tr) => {
-            const cells = $(tr).find('td, th').map((__, el) => $(el).text().trim()).get()
-            allTableText += cells.join(' | ') + '\n'
-          })
-        })
+    const $r = cheerio.load(repeatHtml)
+    const repeatTables: { tableIndex: number; rows: string[][] }[] = []
+    $r('table').each((i, table) => {
+      const rows: string[][] = []
+      $r(table).find('tr').each((_, tr) => {
+        const cells = $r(tr).find('td, th').map((__, el) => $r(el).text().trim()).get()
+        rows.push(cells)
+      })
+      repeatTables.push({ tableIndex: i, rows: rows.slice(0, 30) }) // first 30 rows
+    })
 
-        results[type] = {
-          status: response.status,
-          htmlSnippet: allTableText.slice(0, 5000),
-          tableCount: tables.length,
-          headers: tables,
-        }
-        await new Promise((r) => setTimeout(r, 300))
-      } catch (e) {
-        results[type] = {
-          status: 0,
-          htmlSnippet: e instanceof Error ? e.message : String(e),
-          tableCount: 0,
-          headers: [],
-        }
+    // Also fetch cycle page
+    const cycleParams = new URLSearchParams({
+      periodType: '0',
+      startDay: `${refYear}-${String(refMonth).padStart(2, '0')}-01`,
+      endDay: `${refYear}-${String(refMonth).padStart(2, '0')}-28`,
+      startYear: String(refYear),
+      startMonth: String(refMonth),
+      endYear: String(refYear),
+      endMonth: String(refMonth),
+      shopUserId: '',
+    })
+    await new Promise((r) => setTimeout(r, 300))
+    const cycleUrl = `${BM_BASE}/manage/analysis/cycle?${cycleParams.toString()}`
+    const { response: cycleRes } = await fetchFollowRedirects(cycleUrl, {}, storeCookies)
+    const cycleHtml = await cycleRes.text()
+
+    const $c = cheerio.load(cycleHtml)
+    const cycleTables: { tableIndex: number; rows: string[][] }[] = []
+    $c('table').each((i, table) => {
+      const rows: string[][] = []
+      $c(table).find('tr').each((_, tr) => {
+        const cells = $c(tr).find('td, th').map((__, el) => $c(el).text().trim()).get()
+        rows.push(cells)
+      })
+      cycleTables.push({ tableIndex: i, rows: rows.slice(0, 30) })
+    })
+
+    // Also look for any divs/sections with リターン率
+    let returnRateText = ''
+    $r('*').each((_, el) => {
+      const text = $r(el).text()
+      if (/リターン率/.test(text) && text.length < 200) {
+        returnRateText += text + '\n'
       }
-    }
+    })
+    $c('*').each((_, el) => {
+      const text = $c(el).text()
+      if (/リターン率/.test(text) && text.length < 200) {
+        returnRateText += '[cycle] ' + text + '\n'
+      }
+    })
 
     return NextResponse.json({
       store: 'AI TOKYO 渋谷',
-      dateRange: `${startDate} ~ ${endDate}`,
-      results,
+      refPeriod: `${refYear}年${refMonth}月`,
+      repeatTables,
+      cycleTables,
+      returnRateText: returnRateText || 'No リターン率 text found',
     })
   } catch (e) {
     return NextResponse.json({ error: e instanceof Error ? e.message : String(e) }, { status: 500 })
