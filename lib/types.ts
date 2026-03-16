@@ -44,16 +44,19 @@ export type DashboardData = {
   dailyData: { date: string; sales: number; cumulative: number }[]
   lastUpdated: string
   // 顧客KPI
-  totalCustomers: number      // 総客数(今月来店)
-  avgSpend: number             // 客単価
-  newCustomers: number         // 新規人数
-  newCustomerForecast: number  // 新規着地予測
-  nominated: number            // 指名客数
-  freeVisit: number            // フリー客数
-  nominationRate: string       // 指名率(%)
-  newCustomerRate: string      // 新規率(%)
-  newReturn3mRate: string      // 新規3ヶ月リターン率(%)
-  totalUsers: number           // 総顧客数(登録)
-  appMembers: number           // アプリ会員数
-  appMemberRate: string        // アプリ会員率(%)
+  totalCustomers: number          // 合計総客数(今月来店)
+  customerForecast: number        // 合計総客数 着地予測
+  avgSpend: number                // 今月客単価
+  newCustomers: number            // 合計新規人数
+  newCustomerForecast: number     // 合計新規着地予測
+  nominated: number               // 合計指名客数
+  nominatedForecast: number       // 合計指名客数 着地予測
+  freeVisit: number               // 合計フリー客数
+  freeVisitForecast: number       // 合計フリー客数 着地予測
+  nominationRate: string          // 指名率(%)
+  newCustomerRate: string         // 新規率(%) = 100% - 指名率
+  newReturn3mRate: string         // 新規3ヶ月リターン率(%)
+  totalUsers: number              // 総顧客数(登録)
+  appMembers: number              // アプリ会員数
+  appMemberRate: string           // アプリ会員率(%)
 }

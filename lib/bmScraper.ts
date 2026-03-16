@@ -277,40 +277,62 @@ function parseUserHTML(html: string): { totalUsers: number; appMembers: number }
   return { totalUsers, appMembers }
 }
 
-// ─── Cycle (サイクル分析) parsing ──────────────────────────────────────────────
+// ─── Repeat (リピート分析) parsing ─────────────────────────────────────────────
 
-function parseCycleHTML(html: string): { avgCycle: number; newReturn3m: number } {
+function parseRepeatHTML(html: string): number {
   const $ = cheerio.load(html)
-  let avgCycle = 0
   let newReturn3m = 0
 
   const parseNum = (text: string) => parseFloat(text.replace(/[^0-9.]/g, '')) || 0
 
-  // BM cycle page: rows with metric name and value
-  // Look for 新規3ヶ月リターン率 / 新規リターン率 / リターン率 and 来店サイクル
+  // BM リピート分析 page has a table with:
+  //   Headers: 再来月 | 新規 | 再来 | 固定 | 全体
+  //   Rows:    翌月  | XX%  | XX%  | XX%  | XX%
+  //            2ヶ月後| XX%  | XX%  | XX%  | XX%
+  //            3ヶ月後| XX%  | XX%  | XX%  | XX%
+  // We want: 新規 column × 3ヶ月後 row
+
   $('table').each((i, table) => {
     if (i === 0) return // skip form table
-    $(table).find('tr').each((__, tr) => {
-      const cells = $(tr).find('td, th').map((___, el) => $(el).text().trim()).get()
-      if (cells.length < 2) return
 
-      for (let c = 0; c < cells.length - 1; c++) {
-        const label = cells[c]
-        const value = cells[c + 1]
+    // Find header row to locate 新規 column
+    const headers: string[] = []
+    const headerRow = $(table).find('thead tr').last()
+    if (headerRow.length) {
+      headerRow.find('th, td').each((_, el) => { headers.push($(el).text().trim()) })
+    }
+    // Fallback: try first row
+    if (headers.length === 0) {
+      const firstRow = $(table).find('tr').first()
+      firstRow.find('th, td').each((_, el) => { headers.push($(el).text().trim()) })
+    }
 
-        // 新規3ヶ月リターン率 (may appear as various labels)
-        if (/新規.*リターン率|新規.*3.*月.*リターン|3.*月.*リターン率/.test(label)) {
-          newReturn3m = parseNum(value)
-        }
-        // 平均来店サイクル
-        if (/来店サイクル|平均.*サイクル/.test(label) && !label.includes('リターン')) {
-          avgCycle = parseNum(value)
-        }
+    // Find column index for 新規
+    let newCol = -1
+    for (let h = 0; h < headers.length; h++) {
+      if (headers[h].includes('新規')) {
+        newCol = h
+        break
+      }
+    }
+    if (newCol < 0) return // 新規 column not found
+
+    // Find row with 3ヶ月 or 3か月
+    $(table).find('tbody tr, tr').each((_, tr) => {
+      const cells = $(tr).find('td, th').map((__, el) => $(el).text().trim()).get()
+      if (cells.length <= newCol) return
+
+      const rowLabel = cells[0]
+      if (/3[ヶか]月/.test(rowLabel)) {
+        newReturn3m = parseNum(cells[newCol])
+        return false // found it
       }
     })
+
+    if (newReturn3m > 0) return false // done
   })
 
-  return { avgCycle, newReturn3m }
+  return newReturn3m
 }
 
 // ─── Analysis fetch ───────────────────────────────────────────────────────────
@@ -404,16 +426,16 @@ export async function scrapeAllStores(
         // user page failure is non-fatal
       }
 
-      // Cycle (サイクル分析)
+      // Repeat (リピート分析) - 新規3ヶ月リターン率
       try {
-        const cycleHtml = await fetchAnalysisPage(storeCookies, 'cycle', startDate, endDate)
-        const cycleResult = parseCycleHTML(cycleHtml)
-        if (cycleResult.newReturn3m > 0 || cycleResult.avgCycle > 0) {
-          upsertMonthlyCycle(year, month, store.name, store.bm_code, cycleResult.avgCycle, cycleResult.newReturn3m)
+        const repeatHtml = await fetchAnalysisPage(storeCookies, 'repeat', startDate, endDate)
+        const newReturn3m = parseRepeatHTML(repeatHtml)
+        if (newReturn3m > 0) {
+          upsertMonthlyCycle(year, month, store.name, store.bm_code, 0, newReturn3m)
         }
         await new Promise((r) => setTimeout(r, 300))
       } catch {
-        // cycle page failure is non-fatal
+        // repeat page failure is non-fatal
       }
 
       if (dailyRows.length > 0) {

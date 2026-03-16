@@ -102,8 +102,7 @@ export async function GET() {
     : null
 
   // ── 顧客KPI ─────────────────────────────────────────────────────────────
-  const totalCustomers = dailySales.reduce((s, d) => s + d.customers, 0)
-  const avgSpend = totalCustomers > 0 ? Math.round(forecast.actualTotal / totalCustomers) : 0
+  const effectiveDays = Math.max(today, 1)
 
   // 来店客分析データ (visitor) - 全店舗の個別データ取得
   const visitorStores = getPerStoreVisitors(year, month)
@@ -113,13 +112,19 @@ export async function GET() {
   const freeVisit = visitorStores.reduce((s, v) => s + v.free_visit, 0)
   const newCustomers = visitorStores.reduce((s, v) => s + v.new_customers, 0)
 
-  // 新規着地予測
-  const effectiveDays = Math.max(today, 1)
-  const newCustomerForecast = effectiveDays > 0
-    ? Math.round((newCustomers / effectiveDays) * daysInMonth)
-    : 0
+  // 合計総客数 = 来店客分析の指名+フリーを全店舗合計
+  const totalCustomers = nominated + freeVisit
 
-  // 率は全店舗の単純平均
+  // 今月客単価 = 総売上 ÷ 総客数
+  const avgSpend = totalCustomers > 0 ? Math.round(forecast.actualTotal / totalCustomers) : 0
+
+  // 着地予測（日割り × 月日数）
+  const newCustomerForecast = Math.round((newCustomers / effectiveDays) * daysInMonth)
+  const customerForecast = Math.round((totalCustomers / effectiveDays) * daysInMonth)
+  const nominatedForecast = Math.round((nominated / effectiveDays) * daysInMonth)
+  const freeVisitForecast = Math.round((freeVisit / effectiveDays) * daysInMonth)
+
+  // 指名率 = 各店舗の (指名 / (指名+フリー)) の平均
   const nominationRates = visitorStores
     .filter(v => (v.nominated + v.free_visit) > 0)
     .map(v => (v.nominated / (v.nominated + v.free_visit)) * 100)
@@ -127,28 +132,26 @@ export async function GET() {
     ? (nominationRates.reduce((s, r) => s + r, 0) / nominationRates.length).toFixed(1)
     : '0'
 
-  // 新規率 = 各店舗の (新規人数 / 総来店数) の平均
-  const newCustomerRates = visitorStores
-    .filter(v => (v.nominated + v.free_visit) > 0)
-    .map(v => (v.new_customers / (v.nominated + v.free_visit)) * 100)
-  const newCustomerRate = newCustomerRates.length > 0
-    ? (newCustomerRates.reduce((s, r) => s + r, 0) / newCustomerRates.length).toFixed(1)
+  // 新規率 = 100% - 指名率（指名+新規で100%になるように）
+  const newCustomerRate = nominationRates.length > 0
+    ? (100 - parseFloat(nominationRate)).toFixed(1)
     : '0'
 
-  // サイクル分析データ (cycle) - 新規3ヶ月リターン率
+  // リピート分析データ - 新規3ヶ月リターン率（各店舗から取得して平均）
   const cycleStores = getPerStoreCycle(year, month)
   const return3mRates = cycleStores
     .filter(c => c.new_return_3m > 0)
     .map(c => c.new_return_3m)
   const newReturn3mRate = return3mRates.length > 0
     ? (return3mRates.reduce((s, r) => s + r, 0) / return3mRates.length).toFixed(1)
-    : '0'
+    : '—'
 
-  // 顧客データ (user) - 全店舗の個別データ取得
+  // 顧客データ (user) - 全店舗合計
   const userStores = getPerStoreUsers(year, month)
   const totalUsers = userStores.reduce((s, u) => s + u.total_users, 0)
   const appMembers = userStores.reduce((s, u) => s + u.app_members, 0)
 
+  // アプリ会員率 = 各店舗の (アプリ会員/総顧客) の平均
   const appMemberRates = userStores
     .filter(u => u.total_users > 0)
     .map(u => (u.app_members / u.total_users) * 100)
@@ -170,11 +173,14 @@ export async function GET() {
     dailyData,
     lastUpdated: getLastScrapeTime() ?? new Date().toISOString(),
     totalCustomers,
+    customerForecast,
     avgSpend,
     newCustomers,
     newCustomerForecast,
     nominated,
+    nominatedForecast,
     freeVisit,
+    freeVisitForecast,
     nominationRate,
     newCustomerRate,
     newReturn3mRate,

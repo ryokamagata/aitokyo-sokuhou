@@ -160,14 +160,14 @@ export default function DashboardClient() {
 
           {/* 顧客KPI */}
           <div className="bg-gray-800 rounded-xl p-4">
-            <h2 className="text-sm font-medium text-gray-300 mb-3">顧客分析</h2>
+            <h2 className="text-sm font-medium text-gray-300 mb-3">全店舗 顧客分析</h2>
             <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
-              <MiniKpi label="新規人数" value={`${data.newCustomers.toLocaleString()}人`} valueColor="text-emerald-400" />
-              <MiniKpi label="新規 着地予測" value={`${data.newCustomerForecast.toLocaleString()}人`} valueColor="text-cyan-400" />
-              <MiniKpi label="客単価" value={formatYen(data.avgSpend)} />
-              <MiniKpi label="総客数" value={`${data.totalCustomers.toLocaleString()}人`} />
-              <MiniKpi label="指名客数" value={`${data.nominated.toLocaleString()}人`} />
-              <MiniKpi label="フリー客数" value={`${data.freeVisit.toLocaleString()}人`} />
+              <MiniKpi label="合計新規人数" value={`${data.newCustomers.toLocaleString()}人`} valueColor="text-emerald-400" />
+              <MiniKpi label="合計新規 着地予測" value={`${data.newCustomerForecast.toLocaleString()}人`} valueColor="text-cyan-400" />
+              <MiniKpi label="今月客単価" value={formatYen(data.avgSpend)} />
+              <MiniKpi label="合計総客数" value={`${data.totalCustomers.toLocaleString()}人`} sub={`着地予測: ${data.customerForecast.toLocaleString()}人`} />
+              <MiniKpi label="合計指名客数" value={`${data.nominated.toLocaleString()}人`} sub={`着地予測: ${data.nominatedForecast.toLocaleString()}人`} />
+              <MiniKpi label="合計フリー客数" value={`${data.freeVisit.toLocaleString()}人`} sub={`着地予測: ${data.freeVisitForecast.toLocaleString()}人`} />
               <MiniKpi
                 label="指名率"
                 value={`${data.nominationRate}%`}
@@ -176,12 +176,12 @@ export default function DashboardClient() {
               <MiniKpi
                 label="新規率"
                 value={`${data.newCustomerRate}%`}
-                valueColor={parseFloat(data.newCustomerRate) >= 40 ? 'text-green-400' : parseFloat(data.newCustomerRate) >= 20 ? 'text-blue-400' : 'text-yellow-400'}
+                valueColor={parseFloat(data.newCustomerRate) <= 15 ? 'text-green-400' : parseFloat(data.newCustomerRate) <= 30 ? 'text-blue-400' : 'text-yellow-400'}
               />
               <MiniKpi
                 label="新規3ヶ月リターン率"
-                value={`${data.newReturn3mRate}%`}
-                valueColor={parseFloat(data.newReturn3mRate) >= 40 ? 'text-green-400' : parseFloat(data.newReturn3mRate) >= 20 ? 'text-blue-400' : 'text-yellow-400'}
+                value={data.newReturn3mRate === '—' ? '—' : `${data.newReturn3mRate}%`}
+                valueColor={data.newReturn3mRate !== '—' && parseFloat(data.newReturn3mRate) >= 40 ? 'text-green-400' : data.newReturn3mRate !== '—' && parseFloat(data.newReturn3mRate) >= 20 ? 'text-blue-400' : 'text-yellow-400'}
               />
               <MiniKpi label="総顧客数" value={`${data.totalUsers.toLocaleString()}人`} />
               <MiniKpi label="アプリ会員数" value={`${data.appMembers.toLocaleString()}人`} />
@@ -250,11 +250,12 @@ function KpiCard({
   )
 }
 
-function MiniKpi({ label, value, valueColor = 'text-white' }: { label: string; value: string; valueColor?: string }) {
+function MiniKpi({ label, value, sub, valueColor = 'text-white' }: { label: string; value: string; sub?: string; valueColor?: string }) {
   return (
     <div className="bg-gray-900/50 rounded-lg p-3">
       <p className="text-xs text-gray-400 mb-1">{label}</p>
       <p className={`text-lg font-bold ${valueColor}`}>{value}</p>
+      {sub && <p className="text-xs text-gray-500 mt-0.5">{sub}</p>}
     </div>
   )
 }
