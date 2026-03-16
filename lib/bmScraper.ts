@@ -194,6 +194,14 @@ async function fetchAnalysis(
 
 // ─── Main orchestrator ────────────────────────────────────────────────────────
 
+export interface ScrapeProgress {
+  phase: string
+  current: number
+  total: number
+  storeName?: string
+  detail?: string
+}
+
 export interface ScrapeResult {
   storesScraped: number
   recordsStored: number
@@ -203,20 +211,24 @@ export interface ScrapeResult {
 export async function scrapeAllStores(
   year: number,
   month: number,
-  today: number
+  today: number,
+  onProgress?: (p: ScrapeProgress) => void
 ): Promise<ScrapeResult> {
   const mm = String(month).padStart(2, '0')
   const dd = String(today).padStart(2, '0')
   const startDate = `${year}-${mm}-01`
   const endDate = `${year}-${mm}-${dd}`
 
+  onProgress?.({ phase: 'login', current: 0, total: STORES.length, detail: 'BMにログイン中...' })
   const groupCookies = await loginGroup()
 
   let storesScraped = 0
   let recordsStored = 0
   const errors: string[] = []
 
-  for (const store of STORES) {
+  for (let i = 0; i < STORES.length; i++) {
+    const store = STORES[i]
+    onProgress?.({ phase: 'scraping', current: i + 1, total: STORES.length, storeName: store.name })
     try {
       const storeCookies = await loginStore(groupCookies, store.bm_code)
 
@@ -245,6 +257,7 @@ export async function scrapeAllStores(
     }
   }
 
+  onProgress?.({ phase: 'done', current: STORES.length, total: STORES.length, detail: '完了' })
   return { storesScraped, recordsStored, errors }
 }
 
@@ -280,26 +293,40 @@ export async function scrapeAllAnalysis(
   year: number,
   month: number,
   today: number,
-  types?: AnalysisType[]
+  types?: AnalysisType[],
+  onProgress?: (p: ScrapeProgress) => void
 ): Promise<AnalysisScrapeResult> {
   const mm = String(month).padStart(2, '0')
   const dd = String(today).padStart(2, '0')
   const startDate = `${year}-${mm}-01`
   const endDate = `${year}-${mm}-${dd}`
   const targetTypes = types ?? Array.from(ANALYSIS_TYPES)
+  const totalPages = STORES.length * targetTypes.length
 
+  onProgress?.({ phase: 'login', current: 0, total: totalPages, detail: 'BMにログイン中...' })
   const groupCookies = await loginGroup()
 
   let storesScraped = 0
   let typesScraped = 0
+  let pagesDone = 0
   const errors: string[] = []
 
-  for (const store of STORES) {
+  for (let si = 0; si < STORES.length; si++) {
+    const store = STORES[si]
     try {
       const storeCookies = await loginStore(groupCookies, store.bm_code)
       let storeTypesOk = 0
 
-      for (const type of targetTypes) {
+      for (let ti = 0; ti < targetTypes.length; ti++) {
+        const type = targetTypes[ti]
+        pagesDone++
+        onProgress?.({
+          phase: 'scraping',
+          current: pagesDone,
+          total: totalPages,
+          storeName: store.name,
+          detail: `${store.name} - ${type}`,
+        })
         try {
           const html = await fetchAnalysisPage(storeCookies, type, startDate, endDate)
           const parsed = parseAnalysisHTML(type, html)
@@ -329,9 +356,11 @@ export async function scrapeAllAnalysis(
       // 500ms delay between stores
       await new Promise((r) => setTimeout(r, 500))
     } catch (e) {
+      pagesDone += targetTypes.length - (pagesDone % targetTypes.length === 0 ? 0 : pagesDone % targetTypes.length)
       errors.push(`${store.name}: ${e instanceof Error ? e.message : String(e)}`)
     }
   }
 
+  onProgress?.({ phase: 'done', current: totalPages, total: totalPages, detail: '完了' })
   return { storesScraped, typesScraped, errors }
 }

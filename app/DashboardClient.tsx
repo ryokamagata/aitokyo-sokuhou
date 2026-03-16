@@ -8,6 +8,7 @@ import StoreBreakdown from '@/components/StoreBreakdown'
 import StaffBreakdown from '@/components/StaffBreakdown'
 import TargetInput from '@/components/TargetInput'
 import UploadZone from '@/components/UploadZone'
+import ScrapeButton from '@/components/ScrapeButton'
 import AnalyticsTabs from './AnalyticsTabs'
 import type { DashboardData } from '@/lib/types'
 
@@ -202,7 +203,12 @@ export default function DashboardClient() {
           {/* BM データ同期 */}
           <div className="bg-gray-800 rounded-xl p-4">
             <h2 className="text-sm font-medium text-gray-300 mb-3">BM データ同期</h2>
-            <ScrapeZone onSuccess={refresh} lastUpdated={data.lastUpdated} />
+            <ScrapeButton url="/api/scrape" label="BM から今すぐ取込" onDone={refresh} />
+            {data.lastUpdated && (
+              <p className="text-xs text-gray-600 mt-2">
+                最終同期: {new Date(data.lastUpdated).toLocaleString('ja-JP', { month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' })}
+              </p>
+            )}
           </div>
 
           {/* CSV 取込（サブ手段） */}
@@ -247,74 +253,6 @@ function EmptyState() {
   return (
     <div className="flex items-center justify-center h-32 text-gray-600 text-sm">
       BMのCSVをアップロードするとグラフが表示されます
-    </div>
-  )
-}
-
-function ScrapeZone({
-  onSuccess,
-  lastUpdated,
-}: {
-  onSuccess: () => void
-  lastUpdated: string
-}) {
-  const [status, setStatus] = useState<'idle' | 'loading' | 'done' | 'error'>('idle')
-  const [message, setMessage] = useState<string | null>(null)
-
-  const handleScrape = async () => {
-    setStatus('loading')
-    setMessage(null)
-    try {
-      const res = await fetch('/api/scrape', { method: 'POST' })
-      const json = await res.json()
-      if (!res.ok || !json.success) {
-        setStatus('error')
-        setMessage(json.error ?? '同期に失敗しました')
-      } else {
-        setStatus('done')
-        const errCount = (json.errors as string[]).length
-        setMessage(
-          `${json.storesScraped}店舗・${json.recordsStored}件を取得${errCount > 0 ? `（${errCount}店舗エラー）` : ''}`
-        )
-        onSuccess()
-      }
-    } catch {
-      setStatus('error')
-      setMessage('通信エラーが発生しました')
-    }
-  }
-
-  const lastSync = lastUpdated
-    ? new Date(lastUpdated).toLocaleString('ja-JP', {
-        month: 'numeric',
-        day: 'numeric',
-        hour: '2-digit',
-        minute: '2-digit',
-      })
-    : null
-
-  return (
-    <div className="flex flex-col gap-2">
-      <div className="flex items-center gap-3">
-        <button
-          onClick={handleScrape}
-          disabled={status === 'loading'}
-          className={`px-4 py-2 rounded-lg text-sm font-medium transition-colors ${
-            status === 'loading'
-              ? 'bg-gray-600 text-gray-400 cursor-not-allowed'
-              : 'bg-blue-600 hover:bg-blue-500 text-white'
-          }`}
-        >
-          {status === 'loading' ? '同期中（約60秒）...' : 'BM から今すぐ取込'}
-        </button>
-        {lastSync && <span className="text-xs text-gray-500">最終同期: {lastSync}</span>}
-      </div>
-      {message && (
-        <p className={`text-xs ${status === 'error' ? 'text-red-400' : 'text-green-400'}`}>
-          {message}
-        </p>
-      )}
-      <p className="text-xs text-gray-600">全11店舗のデータをBMから直接取得します</p>
     </div>
   )
 }

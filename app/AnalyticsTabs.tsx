@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useState } from 'react'
 import StoreFilter from '@/components/StoreFilter'
+import ScrapeButton from '@/components/ScrapeButton'
 import ReserveAnalysis from '@/components/ReserveAnalysis'
 import SalesAnalysis from '@/components/SalesAnalysis'
 import RepeatAnalysis from '@/components/RepeatAnalysis'
@@ -38,8 +39,6 @@ export default function AnalyticsTabs({ year, month }: { year: number; month: nu
   const [storeFilter, setStoreFilter] = useState('all')
   const [stores, setStores] = useState<StoreData[]>([])
   const [loading, setLoading] = useState(false)
-  const [scraping, setScraping] = useState(false)
-  const [scrapeMsg, setScrapeMsg] = useState<string | null>(null)
 
   const fetchData = useCallback(async () => {
     setLoading(true)
@@ -64,28 +63,6 @@ export default function AnalyticsTabs({ year, month }: { year: number; month: nu
     fetchData()
   }, [fetchData])
 
-  const handleScrape = async () => {
-    setScraping(true)
-    setScrapeMsg(null)
-    try {
-      const res = await fetch('/api/scrape-analysis', { method: 'POST' })
-      const json = await res.json()
-      if (json.success) {
-        const errCount = json.errors?.length ?? 0
-        setScrapeMsg(
-          `${json.storesScraped}店舗・${json.typesScraped}タイプを取得${errCount > 0 ? `（${errCount}件エラー）` : ''}`
-        )
-        fetchData()
-      } else {
-        setScrapeMsg(`エラー: ${json.error}`)
-      }
-    } catch {
-      setScrapeMsg('通信エラーが発生しました')
-    } finally {
-      setScraping(false)
-    }
-  }
-
   const filteredStores = storeFilter === 'all'
     ? stores
     : stores.filter((s) => s.bm_code === storeFilter)
@@ -95,23 +72,14 @@ export default function AnalyticsTabs({ year, month }: { year: number; month: nu
       {/* Controls */}
       <div className="flex flex-wrap items-center gap-3">
         <StoreFilter value={storeFilter} onChange={setStoreFilter} />
-        <button
-          onClick={handleScrape}
-          disabled={scraping}
-          className={`px-3 py-1.5 rounded-lg text-xs font-medium transition-colors ${
-            scraping
-              ? 'bg-gray-600 text-gray-400 cursor-not-allowed'
-              : 'bg-blue-600 hover:bg-blue-500 text-white'
-          }`}
-        >
-          {scraping ? '同期中（約3-5分）...' : '全分析データ同期'}
-        </button>
-        {scrapeMsg && (
-          <span className={`text-xs ${scrapeMsg.includes('エラー') ? 'text-red-400' : 'text-green-400'}`}>
-            {scrapeMsg}
-          </span>
-        )}
       </div>
+
+      {/* Scrape button with progress */}
+      <ScrapeButton
+        url="/api/scrape-analysis"
+        label="全分析データ同期"
+        onDone={fetchData}
+      />
 
       {/* Tab bar */}
       <div className="flex flex-wrap gap-1">
@@ -169,4 +137,3 @@ function AnalysisContent({
     }
   }
 }
-
