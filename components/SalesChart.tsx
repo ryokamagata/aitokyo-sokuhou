@@ -26,7 +26,7 @@ export default function SalesChart({
   forecast: ForecastResult
 }) {
   const formatYen = (v: number) =>
-    v >= 1_000_000 ? `${(v / 1_000_000).toFixed(1)}M` : `${(v / 1_000).toFixed(0)}K`
+    v >= 10_000 ? `${Math.round(v / 10_000)}万` : `¥${v.toLocaleString()}`
 
   // 目標ペース（月全体）
   const targetPaceMap: Record<string, number> = {}
