@@ -250,7 +250,13 @@ export function getLastScrapeTime(): string | null {
   const row = db
     .prepare('SELECT scraped_at FROM scrape_log WHERE error IS NULL ORDER BY id DESC LIMIT 1')
     .get() as { scraped_at: string } | undefined
-  return row?.scraped_at ?? null
+  if (!row) return null
+  // New records contain 'T' (already JST), old records are UTC space-separated
+  if (row.scraped_at.includes('T')) return row.scraped_at
+  // Old UTC records → convert to JST (+9h)
+  const utc = new Date(row.scraped_at + 'Z')
+  const jst = new Date(utc.getTime() + 9 * 60 * 60 * 1000)
+  return `${jst.getFullYear()}-${String(jst.getMonth() + 1).padStart(2, '0')}-${String(jst.getDate()).padStart(2, '0')}T${String(jst.getHours()).padStart(2, '0')}:${String(jst.getMinutes()).padStart(2, '0')}:${String(jst.getSeconds()).padStart(2, '0')}`
 }
 
 export function logScrape(storesScraped: number, recordsStored: number, error?: string): void {
