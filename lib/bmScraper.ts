@@ -92,18 +92,30 @@ async function loginGroup(): Promise<Cookies> {
   const password = process.env.BM_PASSWORD
   if (!loginId || !password) throw new Error('BM_LOGIN_ID / BM_PASSWORD env vars not set')
 
-  const { cookies } = await fetchFollowRedirects(
-    `${BM_BASE}/groupmanage/login/`,
-    {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-      body: new URLSearchParams({ login_id: loginId, password }).toString(),
-    },
-    new Map()
-  )
+  // POST login - BM returns 302 on success, 200 (login page) on failure
+  const res = await fetch(`${BM_BASE}/groupmanage/login/`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+    body: new URLSearchParams({ login_id: loginId, password }).toString(),
+    redirect: 'manual',
+  })
 
-  if (cookies.size === 0) throw new Error('Group login failed: no cookies returned')
-  return cookies
+  if (res.status !== 302) {
+    // Login page returned instead of redirect = credentials rejected
+    const html = await res.text()
+    const errMatch = html.match(/<div class="error">([^<]+)</)
+    const errMsg = errMatch ? errMatch[1] : 'ログインに失敗しました'
+    throw new Error(`BM login failed: ${errMsg}`)
+  }
+
+  const cookies = cookiesFromResponse(res)
+  const loc = res.headers.get('location') ?? `${BM_BASE}/groupmanage/top`
+  const nextUrl = loc.startsWith('http') ? loc : `${BM_BASE}${loc}`
+
+  // Follow the redirect to get session cookies
+  const { cookies: finalCookies } = await fetchFollowRedirects(nextUrl, {}, cookies)
+  if (finalCookies.size === 0) throw new Error('Group login failed: no session cookies')
+  return finalCookies
 }
 
 async function loginStore(groupCookies: Cookies, bmCode: string): Promise<Cookies> {
