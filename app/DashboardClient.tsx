@@ -9,7 +9,10 @@ import StaffBreakdown from '@/components/StaffBreakdown'
 import TargetInput from '@/components/TargetInput'
 import UploadZone from '@/components/UploadZone'
 import ScrapeButton from '@/components/ScrapeButton'
+import HistoryView from '@/components/HistoryView'
 import type { DashboardData } from '@/lib/types'
+
+type MainTab = 'current' | 'history'
 
 const CONFIDENCE_LABEL = { high: '高', medium: '中', low: '低' } as const
 
@@ -18,6 +21,7 @@ export default function DashboardClient() {
   const [data, setData] = useState<DashboardData | null>(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
+  const [mainTab, setMainTab] = useState<MainTab>('current')
 
   const refresh = useCallback(async () => {
     try {
@@ -89,6 +93,36 @@ export default function DashboardClient() {
             onSaved={refresh}
           />
       </div>
+
+      {/* メインタブ切替 */}
+      <div className="flex gap-1 bg-gray-800 rounded-lg p-1">
+        <button
+          onClick={() => setMainTab('current')}
+          className={`flex-1 text-sm py-2 px-4 rounded-md transition-colors font-medium ${
+            mainTab === 'current'
+              ? 'bg-blue-600 text-white'
+              : 'text-gray-400 hover:text-gray-200'
+          }`}
+        >
+          今月ダッシュボード
+        </button>
+        <button
+          onClick={() => setMainTab('history')}
+          className={`flex-1 text-sm py-2 px-4 rounded-md transition-colors font-medium ${
+            mainTab === 'history'
+              ? 'bg-blue-600 text-white'
+              : 'text-gray-400 hover:text-gray-200'
+          }`}
+        >
+          過去実績
+        </button>
+      </div>
+
+      {/* 過去実績タブ */}
+      {mainTab === 'history' && <HistoryView />}
+
+      {/* 今月ダッシュボード */}
+      {mainTab === 'current' && <>
 
       {/* KPI カード */}
           <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
@@ -256,6 +290,8 @@ export default function DashboardClient() {
               ビューティーメリットからエクスポートしたCSVファイルをアップロードしてください
             </p>
           </div>
+
+      </>}
     </main>
   )
 }

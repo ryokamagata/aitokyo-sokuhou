@@ -366,6 +366,60 @@ export function getPerStoreCycle(year: number, month: number) {
   ).all(year, month) as { store: string; bm_code: string; avg_cycle: number; new_return_3m: number }[]
 }
 
+// ─── Historical data functions ───────────────────────────────────────────────
+
+/** 全店舗合計の月次売上 (指定範囲) */
+export function getMonthlyTotalSales(fromYear: number, fromMonth: number, toYear: number, toMonth: number) {
+  const db = getDB()
+  const fromPrefix = `${fromYear}-${String(fromMonth).padStart(2, '0')}-01`
+  const toPrefix = `${toYear}-${String(toMonth).padStart(2, '0')}-31`
+  return db.prepare(`
+    SELECT substr(date, 1, 7) as month, SUM(sales) as sales, SUM(customers) as customers
+    FROM store_daily_sales
+    WHERE date >= ? AND date <= ?
+    GROUP BY substr(date, 1, 7)
+    ORDER BY month ASC
+  `).all(fromPrefix, toPrefix) as { month: string; sales: number; customers: number }[]
+}
+
+/** 店舗別の月次売上 (指定範囲) */
+export function getMonthlyStoreSales(fromYear: number, fromMonth: number, toYear: number, toMonth: number) {
+  const db = getDB()
+  const fromPrefix = `${fromYear}-${String(fromMonth).padStart(2, '0')}-01`
+  const toPrefix = `${toYear}-${String(toMonth).padStart(2, '0')}-31`
+  return db.prepare(`
+    SELECT substr(date, 1, 7) as month, store, SUM(sales) as sales, SUM(customers) as customers
+    FROM store_daily_sales
+    WHERE date >= ? AND date <= ?
+    GROUP BY substr(date, 1, 7), store
+    ORDER BY month ASC, sales DESC
+  `).all(fromPrefix, toPrefix) as { month: string; store: string; sales: number; customers: number }[]
+}
+
+/** スタッフ別の月次売上 (指定範囲) */
+export function getMonthlyStaffSales(fromYear: number, fromMonth: number, toYear: number, toMonth: number) {
+  const db = getDB()
+  return db.prepare(`
+    SELECT year, month, staff, store, SUM(sales) as sales
+    FROM staff_period_sales
+    WHERE (year * 100 + month) >= ? AND (year * 100 + month) <= ?
+    GROUP BY year, month, staff
+    ORDER BY year ASC, month ASC, sales DESC
+  `).all(fromYear * 100 + fromMonth, toYear * 100 + toMonth) as { year: number; month: number; staff: string; store: string; sales: number }[]
+}
+
+/** スタッフ別の月次売上（店舗付き） */
+export function getMonthlyStaffSalesWithStore(fromYear: number, fromMonth: number, toYear: number, toMonth: number) {
+  const db = getDB()
+  return db.prepare(`
+    SELECT year, month, staff, store, SUM(sales) as sales
+    FROM staff_period_sales
+    WHERE (year * 100 + month) >= ? AND (year * 100 + month) <= ?
+    GROUP BY year, month, staff, store
+    ORDER BY year ASC, month ASC, sales DESC
+  `).all(fromYear * 100 + fromMonth, toYear * 100 + toMonth) as { year: number; month: number; staff: string; store: string; sales: number }[]
+}
+
 // ─── CSV import functions ────────────────────────────────────────────────────
 
 export function importCSVRows(rows: BMRow[], fileHash: string, filename: string): number {
