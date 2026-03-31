@@ -4,17 +4,18 @@ import {
   getMonthlyStoreSales,
   getMonthlyStaffSales,
 } from '@/lib/db'
+import { normalizeStaffName } from '@/lib/staffNormalize'
 
 export const revalidate = 0
 
 export async function GET() {
-  // 2024年9月〜当月
+  // 2024年8月〜当月
   const now = new Date(new Date().toLocaleString('en-US', { timeZone: 'Asia/Tokyo' }))
   const toYear = now.getFullYear()
   const toMonth = now.getMonth() + 1
 
   const fromYear = 2024
-  const fromMonth = 9
+  const fromMonth = 8
 
   const totalMonthly = getMonthlyTotalSales(fromYear, fromMonth, toYear, toMonth)
   const storeMonthly = getMonthlyStoreSales(fromYear, fromMonth, toYear, toMonth)
@@ -27,12 +28,20 @@ export async function GET() {
     storeByMonth[row.month].push({ store: row.store, sales: row.sales, customers: row.customers })
   }
 
-  // スタッフ別: 全月のデータを集約してスタッフごとの月次推移を作る
-  const staffMap: Record<string, { month: string; sales: number }[]> = {}
+  // スタッフ別: 名前を正規化して同一人物の売上を統合
+  // key = normalizedName, value = { month → sales }
+  const staffMerged = new Map<string, { displayName: string; monthData: Map<string, number> }>()
+
   for (const row of staffMonthly) {
+    const normalized = normalizeStaffName(row.staff)
     const monthKey = `${row.year}-${String(row.month).padStart(2, '0')}`
-    if (!staffMap[row.staff]) staffMap[row.staff] = []
-    staffMap[row.staff].push({ month: monthKey, sales: row.sales })
+
+    let entry = staffMerged.get(normalized)
+    if (!entry) {
+      entry = { displayName: normalized, monthData: new Map() }
+      staffMerged.set(normalized, entry)
+    }
+    entry.monthData.set(monthKey, (entry.monthData.get(monthKey) ?? 0) + row.sales)
   }
 
   // スタッフごとに直近月の売上と前月比を計算
@@ -40,18 +49,21 @@ export async function GET() {
   const latestMonth = months[months.length - 1] || ''
   const prevMonth = months.length >= 2 ? months[months.length - 2] : ''
 
-  const staffSummary = Object.entries(staffMap).map(([staff, data]) => {
-    const latestData = data.find(d => d.month === latestMonth)
-    const prevData = data.find(d => d.month === prevMonth)
-    const latestSales = latestData?.sales ?? 0
-    const prevSales = prevData?.sales ?? 0
+  const staffSummary = Array.from(staffMerged.entries()).map(([, { displayName, monthData }]) => {
+    const latestSales = monthData.get(latestMonth) ?? 0
+    const prevSales = monthData.get(prevMonth) ?? 0
     const growthRate = prevSales > 0 ? ((latestSales - prevSales) / prevSales) * 100 : null
+
+    const monthly = Array.from(monthData.entries())
+      .map(([month, sales]) => ({ month, sales }))
+      .sort((a, b) => a.month.localeCompare(b.month))
+
     return {
-      staff,
+      staff: displayName,
       latestSales,
       prevSales,
       growthRate,
-      monthly: data.sort((a, b) => a.month.localeCompare(b.month)),
+      monthly,
     }
   }).sort((a, b) => b.latestSales - a.latestSales)
 

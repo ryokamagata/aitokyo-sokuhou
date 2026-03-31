@@ -11,6 +11,7 @@ import {
   getPerStoreCycle,
 } from '@/lib/db'
 import { computeForecast } from '@/lib/forecastEngine'
+import { mergeStaffSales } from '@/lib/staffNormalize'
 import type { DailySales, DashboardData } from '@/lib/types'
 
 export const revalidate = 0
@@ -50,7 +51,7 @@ export async function GET() {
         staff: {},
       }))
     storeBreakdown = getScrapedStoreSales(year, month)
-    staffBreakdown = getScrapedStaffSales(year, month)
+    staffBreakdown = mergeStaffSales(getScrapedStaffSales(year, month))
   } else {
     // CSV フォールバック
     const rawRows = getSalesForMonth(year, month)
