@@ -12,5 +12,6 @@ export function middleware(request: NextRequest) {
 }
 
 export const config = {
-  matcher: ['/((?!login|api/auth|_next|favicon\\.ico).*)'],
+  matcher: ['/((?!login|api/|_next|favicon\\.ico).*)'],
+  // Note: all /api/ routes are excluded from middleware for programmatic access
 }
