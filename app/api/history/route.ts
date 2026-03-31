@@ -49,6 +49,9 @@ export async function GET() {
   const latestMonth = months[months.length - 1] || ''
   const prevMonth = months.length >= 2 ? months[months.length - 2] : ''
 
+  // スタッフ別: 最新月売上30万円以下を除外（スタイリストのみ表示）
+  const MIN_SALES_FILTER = 300000
+
   const staffSummary = Array.from(staffMerged.entries()).map(([, { displayName, monthData }]) => {
     const latestSales = monthData.get(latestMonth) ?? 0
     const prevSales = monthData.get(prevMonth) ?? 0
@@ -65,7 +68,9 @@ export async function GET() {
       growthRate,
       monthly,
     }
-  }).sort((a, b) => b.latestSales - a.latestSales)
+  })
+  .filter(s => s.latestSales > MIN_SALES_FILTER)
+  .sort((a, b) => b.latestSales - a.latestSales)
 
   return NextResponse.json({
     months,
