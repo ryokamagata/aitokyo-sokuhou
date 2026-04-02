@@ -179,6 +179,7 @@ export default function DashboardClient() {
                 monthlyTarget={data.monthlyTarget}
                 daysInMonth={data.daysInMonth}
                 forecast={data.forecast}
+                forecastStandard={data.forecastDetail?.standard}
               />
             )}
           </div>

@@ -19,11 +19,13 @@ export default function SalesChart({
   monthlyTarget,
   daysInMonth,
   forecast,
+  forecastStandard,
 }: {
   dailyData: DayData[]
   monthlyTarget: number | null
   daysInMonth: number
   forecast: ForecastResult
+  forecastStandard?: number  // forecastDetail.standard（ブレンド予測）
 }) {
   const formatYen = (v: number) =>
     v >= 10_000 ? `${Math.round(v / 10_000)}万` : `¥${v.toLocaleString()}`
@@ -49,11 +51,20 @@ export default function SalesChart({
   }
 
   // 予測データのマップ（累積）
+  // forecastStandardが渡されている場合、DOW予測をスケーリングして着地予測と一致させる
   const projectionMap: Record<string, number> = {}
+  const dowProjectedTotal = forecast.dailyProjections.reduce((s, p) => s + p.projected, 0)
+  const targetProjectedRemaining = forecastStandard
+    ? forecastStandard - lastActualCumulative
+    : dowProjectedTotal
+  const scaleFactor = dowProjectedTotal > 0
+    ? targetProjectedRemaining / dowProjectedTotal
+    : 1
+
   let runningProjection = lastActualCumulative
   for (const p of forecast.dailyProjections) {
     const dayNum = parseInt(p.date.split('-')[2])
-    runningProjection += p.projected
+    runningProjection += Math.round(p.projected * scaleFactor)
     projectionMap[String(dayNum).padStart(2, '0')] = runningProjection
   }
 
