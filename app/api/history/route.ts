@@ -39,6 +39,7 @@ interface Projection {
   yoyProjectedGrowth: number | null     // 着地予測の前年比
   currentMonthEstimate: number | null   // 今月着地予測
   conservativeTotal: number             // 堅実予測（年間）
+  optimisticTotal: number               // 高め見込み（年間）
   annualTarget: number | null           // 年間目標
 }
 
@@ -311,6 +312,9 @@ export async function GET() {
       // 堅実予測: 標準予測の95%
       const conservativeTotal = Math.round(projectedTotal * 0.95)
 
+      // 高め見込み: 標準予測の105%
+      const optimisticTotal = Math.round(projectedTotal * 1.05)
+
       // 年間目標
       const annualTarget = getAnnualTarget(currentYear)
 
@@ -329,6 +333,7 @@ export async function GET() {
           : null,
         currentMonthEstimate,
         conservativeTotal,
+        optimisticTotal,
         annualTarget,
       }
     }

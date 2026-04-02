@@ -229,9 +229,18 @@ export async function GET() {
     // 堅実予測 = 標準の95%（安定した予測幅）
     const conservative = Math.round(standard * 0.95)
 
+    // 高め見込み = max(ペース着地, YoY着地) の103%、または標準の105%
+    let optimistic: number
+    if (yoyEstimate !== null && yoyEstimate > 0) {
+      optimistic = Math.round(Math.max(simplePaceEstimate, yoyEstimate) * 1.03)
+    } else {
+      optimistic = Math.round(standard * 1.05)
+    }
+
     forecastDetail = {
       standard,
       conservative,
+      optimistic,
       rationale: {
         paceEstimate: simplePaceEstimate,
         yoyEstimate,

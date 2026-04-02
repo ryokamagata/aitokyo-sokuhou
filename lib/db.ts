@@ -176,14 +176,30 @@ export function setTarget(year: number, month: number, target: number) {
   ).run(year, month, target)
 }
 
-/** 年間の目標合計 (設定済み月のみ合算) */
+/** 年間目標を取得: month=0 に直接入力値があればそれを使い、なければ月別合算 */
 export function getAnnualTarget(year: number): number | null {
   const db = getDB()
+  // 直接入力の年間目標 (month=0) を優先
+  const direct = db.prepare(
+    'SELECT target FROM monthly_targets WHERE year=? AND month=0'
+  ).get(year) as { target: number } | undefined
+  if (direct) return direct.target
+
+  // なければ月別目標の合算
   const row = db.prepare(
-    'SELECT SUM(target) as total, COUNT(*) as cnt FROM monthly_targets WHERE year=?'
+    'SELECT SUM(target) as total, COUNT(*) as cnt FROM monthly_targets WHERE year=? AND month>0'
   ).get(year) as { total: number | null; cnt: number } | undefined
   if (!row || row.cnt === 0) return null
   return row.total
+}
+
+/** 年間目標を直接設定 (month=0 で保存) */
+export function setAnnualTarget(year: number, target: number) {
+  const db = getDB()
+  db.prepare(
+    `INSERT INTO monthly_targets(year, month, target) VALUES(?, 0, ?)
+     ON CONFLICT(year, month) DO UPDATE SET target=excluded.target`
+  ).run(year, target)
 }
 
 // ─── Scraped data functions ─────────────────────────────────────────────────

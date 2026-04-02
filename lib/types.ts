@@ -33,6 +33,7 @@ export type ForecastResult = {
 export type ForecastDetail = {
   standard: number           // 標準予測（ブレンド）
   conservative: number       // 堅実予測
+  optimistic: number         // 高め見込み
   rationale: {
     paceEstimate: number       // DOWペース着地
     yoyEstimate: number | null // 前年同月×成長率

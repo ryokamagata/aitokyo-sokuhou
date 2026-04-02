@@ -163,7 +163,7 @@ export default function DashboardClient() {
               <ProgressGauge
                 actual={data.totalSales}
                 target={data.monthlyTarget}
-                forecast={data.forecast.forecastTotal}
+                forecast={data.forecastDetail?.standard ?? data.forecast.forecastTotal}
               />
             </div>
           )}
@@ -292,8 +292,10 @@ function ForecastDetailSection({ data }: { data: DashboardData }) {
   const target = data.monthlyTarget
   const standard = fd?.standard ?? data.forecast.forecastTotal
   const conservative = fd?.conservative ?? Math.round(data.forecast.forecastTotal * 0.95)
+  const optimistic = fd?.optimistic ?? Math.round(data.forecast.forecastTotal * 1.05)
   const confidence = data.forecast.confidence
 
+  const targetDiffOpt = target ? optimistic - target : null
   const targetDiffStd = target ? standard - target : null
   const targetDiffCon = target ? conservative - target : null
 
@@ -313,12 +315,17 @@ function ForecastDetailSection({ data }: { data: DashboardData }) {
 
       {/* 3パターンカード */}
       <div className="grid grid-cols-3 gap-2">
-        {/* 目標 */}
-        <div className="bg-yellow-900/20 border border-yellow-700/30 rounded-lg p-3 text-center">
-          <p className="text-[10px] text-yellow-400 mb-1 font-medium">目標</p>
-          <p className="text-lg font-bold text-yellow-400">
-            {target ? formatYen(target) : '未設定'}
+        {/* 高め見込み */}
+        <div className="bg-emerald-900/20 border border-emerald-700/30 rounded-lg p-3 text-center">
+          <p className="text-[10px] text-emerald-400 mb-1 font-medium">高め見込み</p>
+          <p className="text-lg font-bold text-emerald-400">
+            {formatYen(optimistic)}
           </p>
+          {targetDiffOpt !== null && (
+            <p className={`text-[10px] mt-0.5 ${targetDiffOpt >= 0 ? 'text-green-400' : 'text-red-400'}`}>
+              目標差 {targetDiffOpt >= 0 ? '+' : ''}{formatYen(targetDiffOpt)}
+            </p>
+          )}
         </div>
         {/* 着地予測（標準） */}
         <div className="bg-blue-900/20 border border-blue-600/30 rounded-lg p-3 text-center">
@@ -345,6 +352,13 @@ function ForecastDetailSection({ data }: { data: DashboardData }) {
           )}
         </div>
       </div>
+
+      {/* 月次目標参照 */}
+      {target && (
+        <p className="text-[11px] text-yellow-400/80 text-center">
+          今月目標: {formatYen(target)}
+        </p>
+      )}
 
       {/* 予測根拠 */}
       {fd && (
@@ -391,7 +405,7 @@ function ForecastDetailSection({ data }: { data: DashboardData }) {
             </div>
           </div>
           <p className="text-[10px] text-gray-600 mt-1">
-            ※ 標準予測 = 日割りペース×{Math.round(fd.rationale.paceWeight * 100)}% + YoY予測×{Math.round((1 - fd.rationale.paceWeight) * 100)}% / 堅実 = 低い方の予測×97%
+            ※ 着地予測 = 日割りペース×{Math.round(fd.rationale.paceWeight * 100)}% + YoY予測×{Math.round((1 - fd.rationale.paceWeight) * 100)}% / 高め見込み = max(ペース,YoY)×103% / 堅実 = 標準×95%
           </p>
         </div>
       )}

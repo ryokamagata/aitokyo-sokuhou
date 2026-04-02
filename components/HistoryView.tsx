@@ -1,6 +1,6 @@
 'use client'
 
-import { Fragment, useEffect, useState } from 'react'
+import { Fragment, useCallback, useEffect, useState } from 'react'
 
 type TotalMonthly = { month: string; sales: number; customers: number }
 type StoreMonthRow = { store: string; sales: number; customers: number }
@@ -43,6 +43,7 @@ type Projection = {
   yoyProjectedGrowth: number | null
   currentMonthEstimate: number | null
   conservativeTotal: number
+  optimisticTotal: number
   annualTarget: number | null
 }
 
@@ -69,12 +70,16 @@ export default function HistoryView() {
   const [subTab, setSubTab] = useState<SubTab>('total')
   const [selectedStore, setSelectedStore] = useState<string>('all')
 
-  useEffect(() => {
+  const refresh = useCallback(() => {
     fetch('/api/history')
       .then(r => r.json())
       .then(d => { setData(d); setLoading(false) })
       .catch(() => setLoading(false))
   }, [])
+
+  useEffect(() => {
+    refresh()
+  }, [refresh])
 
   if (loading) return <div className="text-gray-400 text-sm text-center py-8">読み込み中...</div>
   if (!data) return <div className="text-red-400 text-sm text-center py-8">データ取得に失敗しました</div>
@@ -104,7 +109,7 @@ export default function HistoryView() {
         ))}
       </div>
 
-      {subTab === 'total' && <TotalHistory data={data} />}
+      {subTab === 'total' && <TotalHistory data={data} onRefresh={refresh} />}
       {subTab === 'store' && (
         <StoreHistory data={data} selectedStore={selectedStore} onStoreChange={setSelectedStore} />
       )}
@@ -115,11 +120,49 @@ export default function HistoryView() {
 
 // ━━━ 年間合計 & 着地予測 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-function AnnualOverview({ data }: { data: HistoryData }) {
+function AnnualOverview({ data, onRefresh }: { data: HistoryData; onRefresh: () => void }) {
   const { annualSummaries, projection } = data
+  const [annualTargetValue, setAnnualTargetValue] = useState('')
+  const [annualTargetSaving, setAnnualTargetSaving] = useState(false)
+  const [annualTargetSaved, setAnnualTargetSaved] = useState(false)
+
+  // 年間目標の初期値をセット
+  useEffect(() => {
+    if (projection?.annualTarget) {
+      setAnnualTargetValue(projection.annualTarget.toLocaleString())
+    }
+  }, [projection?.annualTarget])
+
   if (!annualSummaries || annualSummaries.length === 0) return null
 
   const prevYearSummary = annualSummaries.find(s => s.isComplete)
+
+  const saveAnnualTarget = async () => {
+    const target = parseInt(annualTargetValue.replace(/[,¥\s万億]/g, ''))
+    if (isNaN(target) || target <= 0 || !projection) return
+
+    // 万を入力した場合の補正: 100未満なら億として、10000未満なら万として扱う
+    let finalTarget = target
+    if (target < 100) {
+      finalTarget = target * 100000000 // 億
+    } else if (target < 100000) {
+      finalTarget = target * 10000 // 万
+    }
+
+    setAnnualTargetSaving(true)
+    try {
+      await fetch('/api/annual-target', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ year: projection.currentYear, target: finalTarget }),
+      })
+      setAnnualTargetSaved(true)
+      setTimeout(() => setAnnualTargetSaved(false), 2000)
+      onRefresh()
+    } finally {
+      setAnnualTargetSaving(false)
+    }
+  }
 
   return (
     <div className="space-y-3">
@@ -149,16 +192,47 @@ function AnnualOverview({ data }: { data: HistoryData }) {
             </span>
           </div>
 
+          {/* 年間目標入力 */}
+          <div className="flex items-center gap-2 mb-3 bg-gray-800/60 rounded-lg p-2">
+            <span className="text-xs text-yellow-400 whitespace-nowrap">年間目標</span>
+            <span className="text-xs text-gray-500">¥</span>
+            <input
+              type="text"
+              value={annualTargetValue}
+              onChange={(e) => setAnnualTargetValue(e.target.value)}
+              onKeyDown={(e) => { if (e.key === 'Enter') saveAnnualTarget() }}
+              placeholder="10億 or 1,000,000,000"
+              className="bg-gray-700 border border-gray-600 rounded px-2 py-1 text-white text-xs
+                         w-36 focus:border-blue-400 focus:outline-none focus:ring-1 focus:ring-blue-400"
+            />
+            <button
+              onClick={saveAnnualTarget}
+              disabled={annualTargetSaving}
+              className="bg-yellow-600 hover:bg-yellow-500 disabled:opacity-50 text-white text-xs
+                         px-2 py-1 rounded transition-colors whitespace-nowrap"
+            >
+              {annualTargetSaving ? '保存中' : annualTargetSaved ? '保存済み' : '保存'}
+            </button>
+            {projection.annualTarget && (
+              <span className="text-[10px] text-yellow-400/70 whitespace-nowrap">
+                現在: {formatOkuMan(projection.annualTarget)}
+              </span>
+            )}
+          </div>
+
           {/* 3パターン表示 */}
           <div className="grid grid-cols-3 gap-2 mb-3">
-            {/* 目標 */}
-            <div className="bg-gray-800/60 rounded-lg p-3 text-center border border-gray-700/50">
-              <p className="text-[10px] text-yellow-400 mb-1">目標</p>
-              <p className="text-sm font-bold text-yellow-400">
-                {projection.annualTarget
-                  ? formatOkuMan(projection.annualTarget)
-                  : '未設定'}
+            {/* 高め見込み */}
+            <div className="bg-emerald-900/20 rounded-lg p-3 text-center border border-emerald-700/30">
+              <p className="text-[10px] text-emerald-400 mb-1">高め見込み</p>
+              <p className="text-sm font-bold text-emerald-400">
+                {formatOkuMan(projection.optimisticTotal)}
               </p>
+              {projection.annualTarget && (
+                <p className={`text-[10px] mt-0.5 ${projection.optimisticTotal >= projection.annualTarget ? 'text-green-400' : 'text-red-400'}`}>
+                  目標差 {projection.optimisticTotal >= projection.annualTarget ? '+' : ''}{formatOkuMan(projection.optimisticTotal - projection.annualTarget)}
+                </p>
+              )}
             </div>
             {/* 着地予測（標準） */}
             <div className="bg-blue-900/30 rounded-lg p-3 text-center border border-blue-600/30">
@@ -192,7 +266,7 @@ function AnnualOverview({ data }: { data: HistoryData }) {
               <p>完了月平均成長率: {projection.avgYoYGrowthRate >= 0 ? '+' : ''}{projection.avgYoYGrowthRate.toFixed(1)}%（前年同月比）</p>
             )}
             <p>完了実績: {projection.ytdMonths}ヶ月 {formatOkuMan(projection.ytdTotal)} / 今月+残り月は前年同月×成長率で予測</p>
-            <p>堅実ライン = 標準予測の95%</p>
+            <p>高め見込み = 標準予測の105% / 堅実ライン = 標準予測の95%</p>
             {prevYearSummary && (
               <p>前年実績: {formatOkuMan(prevYearSummary.total)}
                 {projection.yoyProjectedGrowth !== null && (
@@ -365,7 +439,7 @@ function AnnualOverview({ data }: { data: HistoryData }) {
 
 // ━━━ 全店舗合計 過去実績 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-function TotalHistory({ data }: { data: HistoryData }) {
+function TotalHistory({ data, onRefresh }: { data: HistoryData; onRefresh: () => void }) {
   if (data.totalMonthly.length === 0) {
     return <p className="text-gray-500 text-sm text-center py-4">過去データがありません</p>
   }
@@ -374,7 +448,7 @@ function TotalHistory({ data }: { data: HistoryData }) {
 
   return (
     <div className="space-y-4">
-      <AnnualOverview data={data} />
+      <AnnualOverview data={data} onRefresh={onRefresh} />
 
       <div className="bg-gray-800 rounded-xl p-4">
         <h3 className="text-sm font-medium text-gray-300 mb-3">全店舗合計 月次推移</h3>
