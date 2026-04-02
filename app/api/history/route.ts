@@ -75,6 +75,18 @@ export async function GET() {
 
   // スタッフごとに直近月の売上と前月比を計算
   const months = totalMonthly.map(m => m.month)
+
+  // スタッフデータが実際にある月を特定（staff_period_salesベース）
+  const staffMonthsSet = new Set<string>()
+  for (const [, { monthData }] of staffMerged) {
+    for (const mk of monthData.keys()) staffMonthsSet.add(mk)
+  }
+  const staffMonths = Array.from(staffMonthsSet).sort()
+  const staffLatestMonth = staffMonths[staffMonths.length - 1] || ''
+  const staffPrevMonth = staffMonths.length >= 2 ? staffMonths[staffMonths.length - 2] : ''
+  const staffPrev2Month = staffMonths.length >= 3 ? staffMonths[staffMonths.length - 3] : ''
+
+  // 全体の最新月（表示用）
   const latestMonth = months[months.length - 1] || ''
   const prevMonth = months.length >= 2 ? months[months.length - 2] : ''
 
@@ -82,8 +94,9 @@ export async function GET() {
   const MIN_SALES_FILTER = 300000
 
   const staffSummary = Array.from(staffMerged.entries()).map(([, { displayName, monthData }]) => {
-    const latestSales = monthData.get(latestMonth) ?? 0
-    const prevSales = monthData.get(prevMonth) ?? 0
+    const latestSales = monthData.get(staffLatestMonth) ?? 0
+    const prevSales = monthData.get(staffPrevMonth) ?? 0
+    const prev2Sales = monthData.get(staffPrev2Month) ?? 0
     const growthRate = prevSales > 0 ? ((latestSales - prevSales) / prevSales) * 100 : null
 
     const monthly = Array.from(monthData.entries())
@@ -94,6 +107,7 @@ export async function GET() {
       staff: displayName,
       latestSales,
       prevSales,
+      prev2Sales,
       growthRate,
       monthly,
     }
@@ -237,6 +251,9 @@ export async function GET() {
     months,
     latestMonth,
     prevMonth,
+    staffLatestMonth,
+    staffPrevMonth,
+    staffPrev2Month,
     totalMonthly,
     storeByMonth,
     staffSummary,
