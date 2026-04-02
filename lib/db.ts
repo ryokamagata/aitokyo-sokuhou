@@ -143,6 +143,17 @@ function runMigrations(db: Database.Database) {
       scraped_at TEXT NOT NULL DEFAULT (datetime('now')),
       UNIQUE(year, month, bm_code)
     );
+
+    CREATE TABLE IF NOT EXISTS store_opening_plans (
+      id              INTEGER PRIMARY KEY AUTOINCREMENT,
+      year            INTEGER NOT NULL,
+      opening_month   INTEGER NOT NULL,
+      store_name      TEXT NOT NULL,
+      max_monthly_revenue INTEGER NOT NULL,
+      seats           INTEGER NOT NULL DEFAULT 0,
+      created_at      TEXT NOT NULL DEFAULT (datetime('now')),
+      UNIQUE(year, store_name)
+    );
   `)
 }
 
@@ -200,6 +211,78 @@ export function setAnnualTarget(year: number, target: number) {
     `INSERT INTO monthly_targets(year, month, target) VALUES(?, 0, ?)
      ON CONFLICT(year, month) DO UPDATE SET target=excluded.target`
   ).run(year, target)
+}
+
+// ─── 出店計画 ──────────────────────────────────────────────────────────────
+
+export type StoreOpeningPlan = {
+  id: number
+  year: number
+  opening_month: number
+  store_name: string
+  max_monthly_revenue: number
+  seats: number
+}
+
+export function getStoreOpeningPlans(year?: number): StoreOpeningPlan[] {
+  const db = getDB()
+  if (year) {
+    return db.prepare(
+      'SELECT id, year, opening_month, store_name, max_monthly_revenue, seats FROM store_opening_plans WHERE year=? ORDER BY year, opening_month'
+    ).all(year) as StoreOpeningPlan[]
+  }
+  return db.prepare(
+    'SELECT id, year, opening_month, store_name, max_monthly_revenue, seats FROM store_opening_plans ORDER BY year, opening_month'
+  ).all() as StoreOpeningPlan[]
+}
+
+export function upsertStoreOpeningPlan(plan: {
+  year: number
+  opening_month: number
+  store_name: string
+  max_monthly_revenue: number
+  seats: number
+}): void {
+  const db = getDB()
+  db.prepare(`
+    INSERT INTO store_opening_plans(year, opening_month, store_name, max_monthly_revenue, seats)
+    VALUES(@year, @opening_month, @store_name, @max_monthly_revenue, @seats)
+    ON CONFLICT(year, store_name) DO UPDATE SET
+      opening_month=excluded.opening_month,
+      max_monthly_revenue=excluded.max_monthly_revenue,
+      seats=excluded.seats
+  `).run(plan)
+}
+
+export function deleteStoreOpeningPlan(id: number): void {
+  const db = getDB()
+  db.prepare('DELETE FROM store_opening_plans WHERE id=?').run(id)
+}
+
+/**
+ * 出店計画から月別の予測売上を算出（成長カーブ付き）
+ * 成長カーブ: 1ヶ月目30% → 2ヶ月目50% → 3ヶ月目70% → 4ヶ月目85% → 5ヶ月目95% → 6ヶ月目以降100%
+ */
+export function getStoreOpeningRevenue(year: number): { month: number; revenue: number; storeName: string }[] {
+  const plans = getStoreOpeningPlans(year)
+  const growthCurve = [0.30, 0.50, 0.70, 0.85, 0.95, 1.0]
+  const result: { month: number; revenue: number; storeName: string }[] = []
+
+  for (const plan of plans) {
+    for (let mo = plan.opening_month; mo <= 12; mo++) {
+      const monthsOpen = mo - plan.opening_month // 0-indexed
+      const growthRate = monthsOpen < growthCurve.length
+        ? growthCurve[monthsOpen]
+        : 1.0
+      result.push({
+        month: mo,
+        revenue: Math.round(plan.max_monthly_revenue * growthRate),
+        storeName: plan.store_name,
+      })
+    }
+  }
+
+  return result
 }
 
 // ─── Scraped data functions ─────────────────────────────────────────────────

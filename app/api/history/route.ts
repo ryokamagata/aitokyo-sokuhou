@@ -4,6 +4,8 @@ import {
   getMonthlyStoreSales,
   getMonthlyStaffSales,
   getAnnualTarget,
+  getStoreOpeningPlans,
+  getStoreOpeningRevenue,
 } from '@/lib/db'
 import { normalizeStaffName } from '@/lib/staffNormalize'
 
@@ -41,6 +43,7 @@ interface Projection {
   conservativeTotal: number             // 堅実予測（年間）
   optimisticTotal: number               // 高め見込み（年間）
   annualTarget: number | null           // 年間目標
+  newStoreTotal: number                 // 出店計画による年間上乗せ
 }
 
 export async function GET() {
@@ -309,6 +312,24 @@ export async function GET() {
 
       const prevYearTotal = Array.from(prevYearData.values()).reduce((s, v) => s + v.sales, 0)
 
+      // ── 出店計画による上乗せ ────────────────────────────────────────
+      const openingRevenue = getStoreOpeningRevenue(currentYear)
+      let newStoreTotal = 0
+      const newStoreByMonth: Record<number, number> = {}
+      for (const r of openingRevenue) {
+        newStoreByMonth[r.month] = (newStoreByMonth[r.month] ?? 0) + r.revenue
+        newStoreTotal += r.revenue
+      }
+
+      // 出店計画を月別詳細に追加（予測月のみ）
+      for (const detail of monthDetails) {
+        if (detail.isProjected && newStoreByMonth[detail.month]) {
+          detail.sales += newStoreByMonth[detail.month]
+          projectedTotal += newStoreByMonth[detail.month]
+        }
+      }
+      // 既に実績がある月の出店分はprojectedTotalに加算しない（実績に含まれる前提）
+
       // 堅実予測: 標準予測の95%
       const conservativeTotal = Math.round(projectedTotal * 0.95)
 
@@ -335,9 +356,13 @@ export async function GET() {
         conservativeTotal,
         optimisticTotal,
         annualTarget,
+        newStoreTotal,
       }
     }
   }
+
+  // 出店計画データ
+  const storeOpeningPlans = getStoreOpeningPlans()
 
   return NextResponse.json({
     months,
@@ -352,5 +377,6 @@ export async function GET() {
     staffSummary,
     annualSummaries,
     projection,
+    storeOpeningPlans,
   })
 }

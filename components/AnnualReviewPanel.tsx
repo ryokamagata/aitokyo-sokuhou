@@ -14,8 +14,8 @@ export default function AnnualReviewPanel({
 
   if (items.length === 0) return null
 
-  const goodCount = items.filter(i => i.type === 'good').length
   const warnCount = items.filter(i => i.type === 'warning').length
+  const insightCount = items.filter(i => i.type === 'insight').length
 
   return (
     <div className="bg-gray-800 rounded-xl overflow-hidden">
@@ -34,14 +34,14 @@ export default function AnnualReviewPanel({
             </span>
           )}
           <div className="flex items-center gap-1.5 ml-2">
-            {goodCount > 0 && (
-              <span className="text-xs bg-emerald-900/50 text-emerald-400 px-1.5 py-0.5 rounded">
-                GOOD {goodCount}
-              </span>
-            )}
             {warnCount > 0 && (
               <span className="text-xs bg-amber-900/50 text-amber-400 px-1.5 py-0.5 rounded">
-                改善 {warnCount}
+                要対応 {warnCount}
+              </span>
+            )}
+            {insightCount > 0 && (
+              <span className="text-xs bg-blue-900/50 text-blue-400 px-1.5 py-0.5 rounded">
+                分析 {insightCount}
               </span>
             )}
           </div>
@@ -69,37 +69,42 @@ export default function AnnualReviewPanel({
 }
 
 function ReviewCard({ item }: { item: ReviewItem }) {
-  const isGood = item.type === 'good'
+  const isInsight = item.type === 'insight'
 
   return (
     <div
       className={`rounded-lg p-3 ${
-        isGood
-          ? 'bg-emerald-950/40 border border-emerald-800/30'
+        isInsight
+          ? 'bg-blue-950/40 border border-blue-800/30'
           : 'bg-amber-950/40 border border-amber-800/30'
       }`}
     >
       <div className="flex items-start gap-2">
         <span className="text-sm mt-0.5 shrink-0">
-          {isGood ? '\u2705' : '\u26A0\uFE0F'}
+          {isInsight ? '\uD83D\uDD0D' : '\u26A0\uFE0F'}
         </span>
         <div className="min-w-0 flex-1">
-          <p
-            className={`text-sm font-medium ${
-              isGood ? 'text-emerald-300' : 'text-amber-300'
-            }`}
-          >
-            {item.title}
-          </p>
+          <div className="flex items-center gap-2">
+            <p
+              className={`text-sm font-medium ${
+                isInsight ? 'text-blue-300' : 'text-amber-300'
+              }`}
+            >
+              {item.title}
+            </p>
+            {item.priority === 1 && (
+              <span className="text-[10px] bg-red-900/60 text-red-300 px-1 py-0.5 rounded shrink-0">
+                重要
+              </span>
+            )}
+          </div>
           <p className="text-xs text-gray-400 mt-0.5">
             {item.detail}
           </p>
-          {item.action && (
-            <p className="text-xs mt-1.5 text-gray-300 bg-gray-800/60 rounded px-2 py-1.5">
-              <span className="text-gray-500 mr-1">&rarr;</span>
-              {item.action}
-            </p>
-          )}
+          <p className="text-xs mt-1.5 text-gray-300 bg-gray-800/60 rounded px-2 py-1.5 leading-relaxed">
+            <span className="text-gray-500 mr-1">&rarr;</span>
+            {item.action}
+          </p>
         </div>
       </div>
     </div>

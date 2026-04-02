@@ -46,6 +46,16 @@ type Projection = {
   conservativeTotal: number
   optimisticTotal: number
   annualTarget: number | null
+  newStoreTotal?: number
+}
+
+type StoreOpeningPlan = {
+  id: number
+  year: number
+  opening_month: number
+  store_name: string
+  max_monthly_revenue: number
+  seats: number
 }
 
 type HistoryData = {
@@ -61,6 +71,7 @@ type HistoryData = {
   staffSummary: StaffSummary[]
   annualSummaries: AnnualSummary[]
   projection: Projection | null
+  storeOpeningPlans?: StoreOpeningPlan[]
 }
 
 type SubTab = 'total' | 'store' | 'staff'
@@ -457,6 +468,14 @@ function TotalHistory({ data, onRefresh }: { data: HistoryData; onRefresh: () =>
         annualSummaries={data.annualSummaries}
         staffSummary={data.staffSummary}
         totalMonthly={data.totalMonthly}
+      />
+
+      {/* 出店計画 */}
+      <StoreOpeningPlanSection
+        plans={data.storeOpeningPlans ?? []}
+        currentYear={data.projection?.currentYear ?? new Date().getFullYear()}
+        newStoreTotal={data.projection?.newStoreTotal}
+        onRefresh={onRefresh}
       />
 
       <div className="bg-gray-800 rounded-xl p-4">
@@ -905,4 +924,224 @@ function shortenStoreName(name: string): string {
     .replace('AITOKYO ', '')
     .replace("men's ", '')
     .replace('by AI TOKYO', '')
+}
+
+// ━━━ 出店計画 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+function StoreOpeningPlanSection({
+  plans,
+  currentYear,
+  newStoreTotal,
+  onRefresh,
+}: {
+  plans: StoreOpeningPlan[]
+  currentYear: number
+  newStoreTotal?: number
+  onRefresh: () => void
+}) {
+  const [open, setOpen] = useState(false)
+  const [year, setYear] = useState(currentYear)
+  const [storeName, setStoreName] = useState('')
+  const [openingMonth, setOpeningMonth] = useState(1)
+  const [maxRevenue, setMaxRevenue] = useState('')
+  const [seats, setSeats] = useState('')
+  const [saving, setSaving] = useState(false)
+
+  const yearPlans = plans.filter(p => p.year === year)
+
+  // 成長カーブ
+  const growthCurve = [0.30, 0.50, 0.70, 0.85, 0.95, 1.0]
+
+  const handleSave = async () => {
+    if (!storeName || !maxRevenue) return
+    let revenue = parseInt(maxRevenue.replace(/[,¥\s万億]/g, ''))
+    if (isNaN(revenue) || revenue <= 0) return
+    // 万の自動補正
+    if (revenue < 10000) revenue = revenue * 10000
+
+    const seatNum = parseInt(seats) || 0
+    setSaving(true)
+    try {
+      await fetch('/api/store-plans', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          year,
+          opening_month: openingMonth,
+          store_name: storeName,
+          max_monthly_revenue: revenue,
+          seats: seatNum,
+        }),
+      })
+      setStoreName('')
+      setMaxRevenue('')
+      setSeats('')
+      onRefresh()
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  const handleDelete = async (id: number) => {
+    await fetch(`/api/store-plans?id=${id}`, { method: 'DELETE' })
+    onRefresh()
+  }
+
+  return (
+    <div className="bg-gray-800 rounded-xl overflow-hidden">
+      <button
+        onClick={() => setOpen(!open)}
+        className="w-full flex items-center justify-between p-4 hover:bg-gray-700/50 transition-colors"
+      >
+        <div className="flex items-center gap-2">
+          <span className="text-sm font-medium text-gray-200">
+            出店計画
+          </span>
+          {plans.length > 0 && (
+            <span className="text-xs bg-purple-900/50 text-purple-400 px-1.5 py-0.5 rounded">
+              {plans.length}件
+            </span>
+          )}
+          {newStoreTotal && newStoreTotal > 0 && (
+            <span className="text-xs text-gray-500">
+              (新店舗 年間+{formatOkuMan(newStoreTotal)})
+            </span>
+          )}
+        </div>
+        <svg
+          className={`w-4 h-4 text-gray-400 transition-transform ${open ? 'rotate-180' : ''}`}
+          fill="none"
+          stroke="currentColor"
+          viewBox="0 0 24 24"
+        >
+          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+        </svg>
+      </button>
+
+      {open && (
+        <div className="px-4 pb-4 space-y-4">
+          {/* 年切替 */}
+          <div className="flex gap-2 items-center">
+            <span className="text-xs text-gray-400">対象年:</span>
+            {[currentYear, currentYear + 1, currentYear + 2].map(y => (
+              <button
+                key={y}
+                onClick={() => setYear(y)}
+                className={`text-xs px-2 py-1 rounded ${
+                  year === y
+                    ? 'bg-purple-600 text-white'
+                    : 'bg-gray-700 text-gray-400 hover:text-gray-200'
+                }`}
+              >
+                {y}年
+              </button>
+            ))}
+          </div>
+
+          {/* 既存の出店計画 */}
+          {yearPlans.length > 0 && (
+            <div className="space-y-2">
+              {yearPlans.map(plan => {
+                const monthsActive = 12 - plan.opening_month + 1
+                const yearRevenue = Array.from({ length: monthsActive }, (_, i) => {
+                  const rate = i < growthCurve.length ? growthCurve[i] : 1.0
+                  return Math.round(plan.max_monthly_revenue * rate)
+                }).reduce((s, v) => s + v, 0)
+
+                return (
+                  <div key={plan.id} className="bg-gray-700/50 rounded-lg p-3">
+                    <div className="flex items-center justify-between">
+                      <div>
+                        <p className="text-sm font-medium text-white">
+                          {plan.store_name}
+                          <span className="text-xs text-gray-400 ml-2">
+                            {plan.year}年{plan.opening_month}月開店
+                          </span>
+                          {plan.seats > 0 && (
+                            <span className="text-xs text-gray-500 ml-2">
+                              {plan.seats}席
+                            </span>
+                          )}
+                        </p>
+                        <p className="text-xs text-gray-400 mt-1">
+                          MAX月売上: {formatOkuMan(plan.max_monthly_revenue)}
+                          <span className="text-gray-500 mx-1">|</span>
+                          {plan.year}年 寄与: {formatOkuMan(yearRevenue)}
+                        </p>
+                        <p className="text-[10px] text-gray-500 mt-0.5">
+                          成長カーブ: 1ヶ月目30% → 2ヶ月目50% → 3ヶ月目70% → 4ヶ月目85% → 5ヶ月目95% → 6ヶ月目〜100%
+                        </p>
+                      </div>
+                      <button
+                        onClick={() => handleDelete(plan.id)}
+                        className="text-xs text-red-400 hover:text-red-300 px-2 py-1"
+                      >
+                        削除
+                      </button>
+                    </div>
+                  </div>
+                )
+              })}
+            </div>
+          )}
+
+          {/* 新規追加フォーム */}
+          <div className="bg-gray-700/30 rounded-lg p-3 space-y-3">
+            <p className="text-xs text-gray-400 font-medium">新規出店を追加</p>
+            <div className="grid grid-cols-2 gap-2">
+              <div>
+                <label className="text-[10px] text-gray-500">店舗名</label>
+                <input
+                  type="text"
+                  value={storeName}
+                  onChange={e => setStoreName(e.target.value)}
+                  placeholder="例: AI TOKYO 新宿店"
+                  className="w-full bg-gray-700 text-white text-xs rounded px-2 py-1.5 mt-0.5"
+                />
+              </div>
+              <div>
+                <label className="text-[10px] text-gray-500">開店月</label>
+                <select
+                  value={openingMonth}
+                  onChange={e => setOpeningMonth(parseInt(e.target.value))}
+                  className="w-full bg-gray-700 text-white text-xs rounded px-2 py-1.5 mt-0.5"
+                >
+                  {Array.from({ length: 12 }, (_, i) => i + 1).map(m => (
+                    <option key={m} value={m}>{m}月</option>
+                  ))}
+                </select>
+              </div>
+              <div>
+                <label className="text-[10px] text-gray-500">MAX月売上（万円）</label>
+                <input
+                  type="text"
+                  value={maxRevenue}
+                  onChange={e => setMaxRevenue(e.target.value)}
+                  placeholder="例: 200（= 200万）"
+                  className="w-full bg-gray-700 text-white text-xs rounded px-2 py-1.5 mt-0.5"
+                />
+              </div>
+              <div>
+                <label className="text-[10px] text-gray-500">席数（任意）</label>
+                <input
+                  type="text"
+                  value={seats}
+                  onChange={e => setSeats(e.target.value)}
+                  placeholder="例: 5"
+                  className="w-full bg-gray-700 text-white text-xs rounded px-2 py-1.5 mt-0.5"
+                />
+              </div>
+            </div>
+            <button
+              onClick={handleSave}
+              disabled={saving || !storeName || !maxRevenue}
+              className="text-xs bg-purple-600 hover:bg-purple-500 disabled:opacity-50 text-white px-4 py-1.5 rounded"
+            >
+              {saving ? '保存中...' : '追加'}
+            </button>
+          </div>
+        </div>
+      )}
+    </div>
+  )
 }
