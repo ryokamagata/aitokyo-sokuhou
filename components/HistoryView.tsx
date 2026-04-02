@@ -1,6 +1,7 @@
 'use client'
 
 import { Fragment, useCallback, useEffect, useState } from 'react'
+import AnnualReviewPanel from './AnnualReviewPanel'
 
 type TotalMonthly = { month: string; sales: number; customers: number }
 type StoreMonthRow = { store: string; sales: number; customers: number }
@@ -449,6 +450,14 @@ function TotalHistory({ data, onRefresh }: { data: HistoryData; onRefresh: () =>
   return (
     <div className="space-y-4">
       <AnnualOverview data={data} onRefresh={onRefresh} />
+
+      {/* 年間レビュー */}
+      <AnnualReviewPanel
+        projection={data.projection}
+        annualSummaries={data.annualSummaries}
+        staffSummary={data.staffSummary}
+        totalMonthly={data.totalMonthly}
+      />
 
       <div className="bg-gray-800 rounded-xl p-4">
         <h3 className="text-sm font-medium text-gray-300 mb-3">全店舗合計 月次推移</h3>

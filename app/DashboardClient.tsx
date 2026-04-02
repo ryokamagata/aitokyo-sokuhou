@@ -10,6 +10,7 @@ import TargetInput from '@/components/TargetInput'
 import UploadZone from '@/components/UploadZone'
 import ScrapeButton from '@/components/ScrapeButton'
 import HistoryView from '@/components/HistoryView'
+import ReviewPanel from '@/components/ReviewPanel'
 import type { DashboardData } from '@/lib/types'
 
 type MainTab = 'current' | 'history'
@@ -156,6 +157,9 @@ export default function DashboardClient() {
 
           {/* 今月着地予測 3パターン */}
           <ForecastDetailSection data={data} />
+
+          {/* 今月のレビュー */}
+          {!noData && <ReviewPanel data={data} />}
 
           {/* 進捗ゲージ */}
           {data.monthlyTarget && data.monthlyTarget > 0 && (
