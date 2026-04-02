@@ -135,47 +135,10 @@ export default function HistoryView() {
 
 function AnnualOverview({ data, onRefresh }: { data: HistoryData; onRefresh: () => void }) {
   const { annualSummaries, projection } = data
-  const [annualTargetValue, setAnnualTargetValue] = useState('')
-  const [annualTargetSaving, setAnnualTargetSaving] = useState(false)
-  const [annualTargetSaved, setAnnualTargetSaved] = useState(false)
-
-  // 年間目標の初期値をセット
-  useEffect(() => {
-    if (projection?.annualTarget) {
-      setAnnualTargetValue(projection.annualTarget.toLocaleString())
-    }
-  }, [projection?.annualTarget])
 
   if (!annualSummaries || annualSummaries.length === 0) return null
 
   const prevYearSummary = annualSummaries.find(s => s.isComplete)
-
-  const saveAnnualTarget = async () => {
-    const target = parseInt(annualTargetValue.replace(/[,¥\s万億]/g, ''))
-    if (isNaN(target) || target <= 0 || !projection) return
-
-    // 万を入力した場合の補正: 100未満なら億として、10000未満なら万として扱う
-    let finalTarget = target
-    if (target < 100) {
-      finalTarget = target * 100000000 // 億
-    } else if (target < 100000) {
-      finalTarget = target * 10000 // 万
-    }
-
-    setAnnualTargetSaving(true)
-    try {
-      await fetch('/api/annual-target', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ year: projection.currentYear, target: finalTarget }),
-      })
-      setAnnualTargetSaved(true)
-      setTimeout(() => setAnnualTargetSaved(false), 2000)
-      onRefresh()
-    } finally {
-      setAnnualTargetSaving(false)
-    }
-  }
 
   return (
     <div className="space-y-3">
@@ -205,33 +168,14 @@ function AnnualOverview({ data, onRefresh }: { data: HistoryData; onRefresh: () 
             </span>
           </div>
 
-          {/* 年間目標入力 */}
-          <div className="flex flex-wrap items-center gap-1.5 sm:gap-2 mb-3 bg-gray-800/60 rounded-lg p-2">
-            <span className="text-xs text-yellow-400 whitespace-nowrap">年間目標</span>
-            <span className="text-xs text-gray-500">¥</span>
-            <input
-              type="text"
-              value={annualTargetValue}
-              onChange={(e) => setAnnualTargetValue(e.target.value)}
-              onKeyDown={(e) => { if (e.key === 'Enter') saveAnnualTarget() }}
-              placeholder="10億 or 1,000,000,000"
-              className="bg-gray-700 border border-gray-600 rounded px-2 py-1 text-white text-xs
-                         w-28 sm:w-36 focus:border-blue-400 focus:outline-none focus:ring-1 focus:ring-blue-400"
-            />
-            <button
-              onClick={saveAnnualTarget}
-              disabled={annualTargetSaving}
-              className="bg-yellow-600 hover:bg-yellow-500 disabled:opacity-50 text-white text-xs
-                         px-2 py-1 rounded transition-colors whitespace-nowrap"
-            >
-              {annualTargetSaving ? '保存中' : annualTargetSaved ? '保存済み' : '保存'}
-            </button>
-            {projection.annualTarget && (
-              <span className="text-[10px] text-yellow-400/70 whitespace-nowrap">
-                現在: {formatOkuMan(projection.annualTarget)}
-              </span>
-            )}
-          </div>
+          {/* 年間目標（月別目標の合計から自動算出） */}
+          {projection.annualTarget && (
+            <div className="flex flex-wrap items-center gap-1.5 sm:gap-2 mb-3 bg-gray-800/60 rounded-lg p-2">
+              <span className="text-xs text-yellow-400 whitespace-nowrap">年間目標</span>
+              <span className="text-sm font-bold text-yellow-400">{formatOkuMan(projection.annualTarget)}</span>
+              <span className="text-[10px] text-gray-500">（月別目標の合計 / 下の「月別売上目標」で編集）</span>
+            </div>
+          )}
 
           {/* 3パターン表示 */}
           <div className="grid grid-cols-3 gap-1.5 sm:gap-2 mb-3">

@@ -155,6 +155,38 @@ function runMigrations(db: Database.Database) {
       UNIQUE(year, store_name)
     );
   `)
+
+  // 2026年 月別売上目標のシード（既存データがなければ挿入）
+  const targetCount = (db.prepare(
+    'SELECT COUNT(*) as cnt FROM monthly_targets WHERE year=2026 AND month BETWEEN 1 AND 12'
+  ).get() as { cnt: number }).cnt
+  if (targetCount === 0) {
+    const targets2026: [number, number][] = [
+      [1, 67000000],   // 6700万
+      [2, 70000000],   // 7000万（+sea出店）
+      [3, 100000000],  // 1億
+      [4, 95000000],   // 9500万
+      [5, 78000000],   // 7800万
+      [6, 78000000],   // 7800万
+      [7, 120000000],  // 1.2億（横浜直営出店）
+      [8, 110000000],  // 1.1億
+      [9, 80000000],   // 8000万
+      [10, 80000000],  // 8000万
+      [11, 80000000],  // 8000万（渋谷シェアサロン出店）
+      [12, 150000000], // 1.5億
+    ]
+    const stmt = db.prepare(
+      'INSERT OR IGNORE INTO monthly_targets(year, month, target) VALUES(2026, ?, ?)'
+    )
+    const total = targets2026.reduce((s, [, v]) => s + v, 0)
+    db.transaction(() => {
+      for (const [m, t] of targets2026) stmt.run(m, t)
+      // 年間目標も合計で同期
+      db.prepare(
+        'INSERT INTO monthly_targets(year, month, target) VALUES(2026, 0, ?) ON CONFLICT(year, month) DO UPDATE SET target=excluded.target'
+      ).run(total)
+    })()
+  }
 }
 
 export function getSalesForMonth(year: number, month: number) {
@@ -224,7 +256,7 @@ export function getMonthlyTargets(year: number): Record<number, number> {
   return result
 }
 
-/** 月別目標を一括保存 */
+/** 月別目標を一括保存 & 年間目標(month=0)を合計で自動同期 */
 export function setMonthlyTargets(year: number, targets: Record<number, number>) {
   const db = getDB()
   const stmt = db.prepare(
@@ -237,6 +269,13 @@ export function setMonthlyTargets(year: number, targets: Record<number, number>)
       if (m >= 1 && m <= 12 && target > 0) {
         stmt.run(year, m, Math.round(target))
       }
+    }
+    // 年間目標を月別合計で自動同期
+    const sum = db.prepare(
+      'SELECT SUM(target) as total FROM monthly_targets WHERE year=? AND month BETWEEN 1 AND 12'
+    ).get(year) as { total: number | null }
+    if (sum.total) {
+      stmt.run(year, 0, sum.total)
     }
   })
   tx()
