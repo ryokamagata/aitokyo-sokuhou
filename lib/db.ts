@@ -662,6 +662,29 @@ export function getMonthlyStaffSalesWithStore(fromYear: number, fromMonth: numbe
   `).all(fromYear * 100 + fromMonth, toYear * 100 + toMonth) as { year: number; month: number; staff: string; store: string; sales: number }[]
 }
 
+/** 日別の売上・客数（指定日付範囲） */
+export function getDailySales(fromDate: string, toDate: string) {
+  const db = getDB()
+  return db.prepare(`
+    SELECT date, SUM(sales) as sales, SUM(customers) as customers
+    FROM store_daily_sales
+    WHERE date >= ? AND date <= ?
+    GROUP BY date
+    ORDER BY date ASC
+  `).all(fromDate, toDate) as { date: string; sales: number; customers: number }[]
+}
+
+/** 店舗別の日別売上（指定日付範囲） */
+export function getStoreDailySales(fromDate: string, toDate: string) {
+  const db = getDB()
+  return db.prepare(`
+    SELECT date, store, sales, customers
+    FROM store_daily_sales
+    WHERE date >= ? AND date <= ?
+    ORDER BY date ASC, store ASC
+  `).all(fromDate, toDate) as { date: string; store: string; sales: number; customers: number }[]
+}
+
 /** 曜日別の売上・客数集計 (指定範囲) */
 export function getDayOfWeekSales(fromYear: number, fromMonth: number, toYear: number, toMonth: number) {
   const db = getDB()

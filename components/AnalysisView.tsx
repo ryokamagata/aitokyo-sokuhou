@@ -35,6 +35,30 @@ type TargetSuggestion = {
 
 type UtilRow = { dow: number; label: string; avgRate: number; days: number }
 
+type WeekDay = {
+  date: string
+  dow: number
+  dowLabel: string
+  sales: number
+  customers: number
+  holiday: string | null
+}
+
+type WeekData = {
+  label: string
+  from: string
+  to: string
+  days: WeekDay[]
+  storeData: Record<string, Record<string, { sales: number; customers: number }>>
+}
+
+type WeeklyData = {
+  thisWeek: WeekData
+  lastWeek: WeekData
+  prevMonthWeek: WeekData
+  holidayMap: Record<string, string>
+}
+
 type AnalysisData = {
   priceVolumeDecomposition: DecompositionRow[]
   storeDecomposition: Record<string, DecompositionRow[]>
@@ -42,6 +66,7 @@ type AnalysisData = {
   dowByStore: Record<string, DowRow[]>
   dowUtilization: UtilRow[]
   dowUtilByStore: Record<string, UtilRow[]>
+  weeklyData: WeeklyData
   targetSuggestions: TargetSuggestion[]
   suggestedAnnualTotal: number
   existingAnnualTarget: number | null
@@ -249,7 +274,7 @@ function DecompositionPanel({
   )
 }
 
-// ─── 曜日別パターン ──────────────────────────────────────────────────
+// ─── 曜日別（週単位）パターン ──────────────────────────────────────────────
 
 function DowPanel({
   data, selectedStore, onStoreChange,
@@ -258,18 +283,44 @@ function DowPanel({
   selectedStore: string
   onStoreChange: (s: string) => void
 }) {
-  const rows = selectedStore === 'all'
-    ? data.dowSummary
-    : data.dowByStore[selectedStore] ?? []
-
-  const utilRows = selectedStore === 'all'
-    ? data.dowUtilization
-    : data.dowUtilByStore[selectedStore] ?? []
-  const hasUtilData = utilRows.length > 0
-
+  const weekly = data.weeklyData
   const stores = Object.keys(data.dowByStore)
-  const maxSales = rows.length > 0 ? Math.max(...rows.map(r => r.avgSales)) : 0
   const DOW_COLORS = ['text-red-400', 'text-gray-300', 'text-gray-300', 'text-gray-300', 'text-gray-300', 'text-gray-300', 'text-blue-400']
+  const DOW_BG = ['bg-red-500/70', 'bg-gray-500/70', 'bg-gray-500/70', 'bg-gray-500/70', 'bg-gray-500/70', 'bg-gray-500/70', 'bg-blue-500/70']
+
+  // 店舗別のときは日別データを店舗でフィルタ
+  const getWeekDays = (week: WeekData): WeekDay[] => {
+    if (selectedStore === 'all') return week.days
+    const storeMap = week.storeData[selectedStore] ?? {}
+    return week.days.map(d => ({
+      ...d,
+      sales: storeMap[d.date]?.sales ?? 0,
+      customers: storeMap[d.date]?.customers ?? 0,
+    }))
+  }
+
+  const thisWeekDays = getWeekDays(weekly.thisWeek)
+  const lastWeekDays = getWeekDays(weekly.lastWeek)
+  const prevMonthDays = getWeekDays(weekly.prevMonthWeek)
+
+  const weekTotal = (days: WeekDay[]) => days.reduce((s, d) => s + d.sales, 0)
+  const weekCustomers = (days: WeekDay[]) => days.reduce((s, d) => s + d.customers, 0)
+
+  const thisTotal = weekTotal(thisWeekDays)
+  const lastTotal = weekTotal(lastWeekDays)
+  const prevTotal = weekTotal(prevMonthDays)
+
+  const diffPct = (current: number, prev: number) => {
+    if (prev === 0) return null
+    return Math.round((current - prev) / prev * 1000) / 10
+  }
+
+  const maxSalesInWeeks = Math.max(
+    ...thisWeekDays.map(d => d.sales),
+    ...lastWeekDays.map(d => d.sales),
+    ...prevMonthDays.map(d => d.sales),
+    1
+  )
 
   return (
     <div className="space-y-3">
@@ -298,97 +349,150 @@ function DowPanel({
         </div>
       </div>
 
-      {/* 曜日別テーブル */}
+      {/* 週間サマリーカード */}
+      <div className="grid grid-cols-3 gap-2">
+        {[
+          { label: '今週', total: thisTotal, customers: weekCustomers(thisWeekDays), color: 'text-cyan-400', border: 'border-cyan-500/30' },
+          { label: '先週', total: lastTotal, customers: weekCustomers(lastWeekDays), color: 'text-gray-300', border: 'border-gray-600' },
+          { label: '前月同週', total: prevTotal, customers: weekCustomers(prevMonthDays), color: 'text-gray-400', border: 'border-gray-700' },
+        ].map(w => (
+          <div key={w.label} className={`bg-gray-800 rounded-xl p-3 border ${w.border}`}>
+            <p className="text-[10px] text-gray-500">{w.label}</p>
+            <p className={`text-lg font-bold ${w.color}`}>{formatMan(w.total)}</p>
+            <p className="text-[10px] text-gray-500">{w.customers.toLocaleString()}人</p>
+          </div>
+        ))}
+      </div>
+
+      {/* 差分サマリー */}
+      <div className="bg-gray-800 rounded-xl p-3 flex flex-wrap items-center gap-3 text-xs">
+        <span className="text-gray-400">先週比:</span>
+        {(() => {
+          const pct = diffPct(thisTotal, lastTotal)
+          if (pct === null) return <span className="text-gray-600">—</span>
+          return <span className={`font-bold ${pct >= 0 ? 'text-green-400' : 'text-red-400'}`}>{pct >= 0 ? '+' : ''}{pct}%</span>
+        })()}
+        <span className="text-gray-600">|</span>
+        <span className="text-gray-400">前月同週比:</span>
+        {(() => {
+          const pct = diffPct(thisTotal, prevTotal)
+          if (pct === null) return <span className="text-gray-600">—</span>
+          return <span className={`font-bold ${pct >= 0 ? 'text-green-400' : 'text-red-400'}`}>{pct >= 0 ? '+' : ''}{pct}%</span>
+        })()}
+      </div>
+
+      {/* 日別比較チャート */}
       <div className="bg-gray-800 rounded-xl p-3 sm:p-4">
-        <h3 className="text-sm font-medium text-gray-300 mb-1">曜日別 平均売上・客数（直近3ヶ月）</h3>
-        <p className="text-[10px] text-gray-500 mb-3">1日あたりの平均値</p>
-        {rows.length === 0 ? (
-          <p className="text-gray-500 text-sm text-center py-4">データがありません</p>
-        ) : (
-          <>
-            {/* バーチャート */}
-            <div className="grid grid-cols-7 gap-1 mb-4">
-              {rows.map(r => {
-                const pct = maxSales > 0 ? (r.avgSales / maxSales) * 100 : 0
+        <h3 className="text-sm font-medium text-gray-300 mb-1">日別売上比較</h3>
+        <p className="text-[10px] text-gray-500 mb-3">今週 vs 先週 vs 前月同週</p>
+
+        {/* バーチャート: 曜日ごとに3本のバー */}
+        <div className="grid grid-cols-7 gap-1 mb-4">
+          {thisWeekDays.map((d, i) => {
+            const lastD = lastWeekDays[i]
+            const prevD = prevMonthDays[i]
+            const pctThis = maxSalesInWeeks > 0 ? (d.sales / maxSalesInWeeks) * 100 : 0
+            const pctLast = maxSalesInWeeks > 0 ? ((lastD?.sales ?? 0) / maxSalesInWeeks) * 100 : 0
+            const pctPrev = maxSalesInWeeks > 0 ? ((prevD?.sales ?? 0) / maxSalesInWeeks) * 100 : 0
+            return (
+              <div key={d.date} className="flex flex-col items-center">
+                <div className="w-full h-20 flex items-end justify-center gap-[2px]">
+                  <div className="w-2 bg-gray-600/60 rounded-t" style={{ height: `${pctPrev}%` }} title={`前月同週 ${formatMan(prevD?.sales ?? 0)}`} />
+                  <div className="w-2 bg-gray-400/60 rounded-t" style={{ height: `${pctLast}%` }} title={`先週 ${formatMan(lastD?.sales ?? 0)}`} />
+                  <div className={`w-2 rounded-t ${DOW_BG[d.dow]}`} style={{ height: `${pctThis}%` }} title={`今週 ${formatMan(d.sales)}`} />
+                </div>
+                <span className={`text-xs font-bold mt-1 ${DOW_COLORS[d.dow]}`}>{d.dowLabel}</span>
+                {d.holiday && (
+                  <span className="text-[8px] text-red-400 truncate max-w-[48px]">{d.holiday}</span>
+                )}
+                <span className="text-[10px] text-gray-400">{d.sales > 0 ? formatMan(d.sales) : '—'}</span>
+              </div>
+            )
+          })}
+        </div>
+
+        {/* 凡例 */}
+        <div className="flex gap-4 text-[10px] text-gray-500 mb-3">
+          <span className="flex items-center gap-1"><span className="w-2 h-2 rounded bg-gray-600/60 inline-block" /> 前月同週</span>
+          <span className="flex items-center gap-1"><span className="w-2 h-2 rounded bg-gray-400/60 inline-block" /> 先週</span>
+          <span className="flex items-center gap-1"><span className="w-2 h-2 rounded bg-cyan-500/70 inline-block" /> 今週</span>
+        </div>
+
+        {/* 詳細テーブル */}
+        <div className="overflow-x-auto -mx-3 px-3 sm:mx-0 sm:px-0">
+          <table className="w-full text-xs">
+            <thead>
+              <tr className="text-gray-500 border-b border-gray-700">
+                <th className="text-left py-2 px-1">曜日</th>
+                <th className="text-right py-2 px-1">今週</th>
+                <th className="text-right py-2 px-1">先週</th>
+                <th className="text-right py-2 px-1">差分</th>
+                <th className="text-right py-2 px-1">前月同週</th>
+                <th className="text-right py-2 px-1">客数</th>
+              </tr>
+            </thead>
+            <tbody>
+              {thisWeekDays.map((d, i) => {
+                const lastD = lastWeekDays[i]
+                const prevD = prevMonthDays[i]
+                const salesDiff = d.sales - (lastD?.sales ?? 0)
+                const salesDiffPct = diffPct(d.sales, lastD?.sales ?? 0)
                 return (
-                  <div key={r.dow} className="flex flex-col items-center">
-                    <div className="w-full h-24 flex items-end justify-center">
-                      <div
-                        className={`w-full max-w-[32px] rounded-t ${
-                          r.dow === 0 ? 'bg-red-500/70' : r.dow === 6 ? 'bg-blue-500/70' : 'bg-gray-500/70'
-                        }`}
-                        style={{ height: `${pct}%` }}
-                      />
-                    </div>
-                    <span className={`text-xs font-bold mt-1 ${DOW_COLORS[r.dow]}`}>{r.label}</span>
-                    <span className="text-[10px] text-gray-400">{formatMan(r.avgSales)}</span>
-                  </div>
+                  <tr key={d.date} className="border-b border-gray-700/50 hover:bg-gray-700/30">
+                    <td className="py-1.5 px-1">
+                      <div className="flex items-center gap-1">
+                        <span className={`font-bold ${DOW_COLORS[d.dow]}`}>{d.dowLabel}</span>
+                        <span className="text-[10px] text-gray-600">{d.date.slice(5)}</span>
+                        {d.holiday && (
+                          <span className="text-[9px] text-red-400 bg-red-900/30 px-1 rounded">{d.holiday}</span>
+                        )}
+                      </div>
+                    </td>
+                    <td className="py-1.5 px-1 text-right text-white font-bold">
+                      {d.sales > 0 ? formatMan(d.sales) : <span className="text-gray-600">—</span>}
+                    </td>
+                    <td className="py-1.5 px-1 text-right text-gray-400">
+                      {(lastD?.sales ?? 0) > 0 ? formatMan(lastD.sales) : <span className="text-gray-600">—</span>}
+                    </td>
+                    <td className="py-1.5 px-1 text-right">
+                      {d.sales > 0 && (lastD?.sales ?? 0) > 0 ? (
+                        <span className={salesDiff >= 0 ? 'text-green-400' : 'text-red-400'}>
+                          {salesDiff >= 0 ? '+' : ''}{formatMan(salesDiff)}
+                          {salesDiffPct !== null && (
+                            <span className="text-[10px] ml-0.5">({salesDiffPct >= 0 ? '+' : ''}{salesDiffPct}%)</span>
+                          )}
+                        </span>
+                      ) : <span className="text-gray-600">—</span>}
+                    </td>
+                    <td className="py-1.5 px-1 text-right text-gray-500">
+                      {(prevD?.sales ?? 0) > 0 ? formatMan(prevD.sales) : <span className="text-gray-600">—</span>}
+                    </td>
+                    <td className="py-1.5 px-1 text-right text-gray-400">
+                      {d.customers > 0 ? `${d.customers}人` : <span className="text-gray-600">—</span>}
+                    </td>
+                  </tr>
                 )
               })}
-            </div>
-
-            {/* 詳細テーブル */}
-            <table className="w-full text-xs">
-              <thead>
-                <tr className="text-gray-500 border-b border-gray-700">
-                  <th className="text-left py-2 px-1">曜日</th>
-                  <th className="text-right py-2 px-1">平均売上</th>
-                  <th className="text-right py-2 px-1">平均客数</th>
-                  <th className="text-right py-2 px-1">客単価</th>
-                  {hasUtilData && <th className="text-right py-2 px-1">稼働率</th>}
-                  <th className="text-right py-2 px-1">日数</th>
-                </tr>
-              </thead>
-              <tbody>
-                {rows.map(r => {
-                  const util = utilRows.find(u => u.dow === r.dow)
-                  return (
-                    <tr key={r.dow} className="border-b border-gray-700/50 hover:bg-gray-700/30">
-                      <td className={`py-1.5 px-1 font-bold ${DOW_COLORS[r.dow]}`}>{r.label}</td>
-                      <td className="py-1.5 px-1 text-right text-white font-bold">{formatMan(r.avgSales)}</td>
-                      <td className="py-1.5 px-1 text-right text-gray-400">{Math.round(r.avgCustomers)}人</td>
-                      <td className="py-1.5 px-1 text-right text-gray-300">{formatYen(r.avgUnitPrice)}</td>
-                      {hasUtilData && (
-                        <td className="py-1.5 px-1 text-right">
-                          {util ? (
-                            <span className={util.avgRate >= 80 ? 'text-green-400' : util.avgRate >= 60 ? 'text-yellow-400' : 'text-red-400'}>
-                              {util.avgRate}%
-                            </span>
-                          ) : <span className="text-gray-600">—</span>}
-                        </td>
-                      )}
-                      <td className="py-1.5 px-1 text-right text-gray-500">{r.days}日</td>
-                    </tr>
-                  )
-                })}
-              </tbody>
-            </table>
-
-            {/* 曜日間の差分サマリー */}
-            {rows.length >= 2 && (() => {
-              const sorted = [...rows].sort((a, b) => b.avgSales - a.avgSales)
-              const best = sorted[0]
-              const worst = sorted[sorted.length - 1]
-              const gap = best.avgSales - worst.avgSales
-              return (
-                <div className="mt-3 bg-gray-700/30 rounded-lg p-3 text-xs">
-                  <div className="flex items-center gap-3 flex-wrap">
-                    <span className="text-gray-400">最高:</span>
-                    <span className={`font-bold ${DOW_COLORS[best.dow]}`}>{best.label}曜</span>
-                    <span className="text-white font-bold">{formatMan(best.avgSales)}</span>
-                    <span className="text-gray-600">|</span>
-                    <span className="text-gray-400">最低:</span>
-                    <span className={`font-bold ${DOW_COLORS[worst.dow]}`}>{worst.label}曜</span>
-                    <span className="text-white font-bold">{formatMan(worst.avgSales)}</span>
-                    <span className="text-gray-600">|</span>
-                    <span className="text-gray-400">差:</span>
-                    <span className="text-yellow-400 font-bold">{formatMan(gap)}</span>
-                  </div>
-                </div>
-              )
-            })()}
-          </>
-        )}
+              {/* 合計行 */}
+              <tr className="border-t border-gray-600 font-bold">
+                <td className="py-2 px-1 text-gray-300">合計</td>
+                <td className="py-2 px-1 text-right text-cyan-400">{thisTotal > 0 ? formatMan(thisTotal) : '—'}</td>
+                <td className="py-2 px-1 text-right text-gray-400">{lastTotal > 0 ? formatMan(lastTotal) : '—'}</td>
+                <td className="py-2 px-1 text-right">
+                  {thisTotal > 0 && lastTotal > 0 ? (
+                    <span className={thisTotal - lastTotal >= 0 ? 'text-green-400' : 'text-red-400'}>
+                      {thisTotal - lastTotal >= 0 ? '+' : ''}{formatMan(thisTotal - lastTotal)}
+                    </span>
+                  ) : '—'}
+                </td>
+                <td className="py-2 px-1 text-right text-gray-500">{prevTotal > 0 ? formatMan(prevTotal) : '—'}</td>
+                <td className="py-2 px-1 text-right text-gray-400">
+                  {weekCustomers(thisWeekDays) > 0 ? `${weekCustomers(thisWeekDays)}人` : '—'}
+                </td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
       </div>
     </div>
   )

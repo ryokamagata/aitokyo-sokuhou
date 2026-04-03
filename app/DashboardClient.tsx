@@ -246,7 +246,7 @@ export default function DashboardClient() {
                 <ForecastCard label="合計新規人数" value={data.newCustomers} forecast={data.newCustomerForecast} color="text-emerald-400" />
                 <MiniKpi label="今月客単価" value={formatYen(data.avgSpend)} />
                 <MiniKpi
-                  label="新規3ヶ月リターン率"
+                  label="BM新規3ヶ月リターン率(2回目来店)"
                   value={data.newReturn3mRate === '—' ? '—' : `${data.newReturn3mRate}%`}
                   valueColor={data.newReturn3mRate !== '—' && parseFloat(data.newReturn3mRate) >= 40 ? 'text-green-400' : data.newReturn3mRate !== '—' && parseFloat(data.newReturn3mRate) >= 20 ? 'text-blue-400' : 'text-yellow-400'}
                 />

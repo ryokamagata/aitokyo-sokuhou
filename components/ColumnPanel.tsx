@@ -309,9 +309,9 @@ function generateColumns(data: DashboardData): ColumnItem[] {
       cols.push({
         category: 'リピート',
         icon: '\u{1F504}',
-        title: `新規リターン率${returnRate}% — 新規の${100 - returnRate}%が離脱`,
+        title: `BM新規リターン率${returnRate}% — 新規の${100 - returnRate}%が離脱`,
         body: `翌日サンクスLINE（施術写真+ケアアドバイス）→1週間後フォローDM→3週間後クーポン配信のフローをBMステップ配信で自動化。初回来店時の指名誘導も重要。`,
-        metric: `リターン率 ${returnRate}% / 目安 40%以上`,
+        metric: `BM新規3ヶ月リターン率 ${returnRate}% / 目安 40%以上`,
         priority: 'high',
       })
     }

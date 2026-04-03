@@ -6,11 +6,14 @@ import {
   getStoreDayOfWeekSales,
   getDayOfWeekUtilization,
   getStoreDayOfWeekUtilization,
+  getDailySales,
+  getStoreDailySales,
   getMonthlyTargets,
   getAnnualTarget,
   getSeasonalIndex,
 } from '@/lib/db'
 import { STORES, MAX_REVENUE_PER_SEAT, isClosedStore } from '@/lib/stores'
+import { getHolidayMap } from '@/lib/holidays'
 
 export const revalidate = 0
 
@@ -142,6 +145,111 @@ export async function GET() {
     })
   }
 
+  // ── 週単位データ ─────────────────────────────────────────────────
+  // 今週・先週・前月同週のデータを日別で返す
+  const jstNow = now
+  const todayStr = `${jstNow.getFullYear()}-${String(jstNow.getMonth() + 1).padStart(2, '0')}-${String(jstNow.getDate()).padStart(2, '0')}`
+
+  // 今週の月曜日を求める（月曜始まり）
+  const dayOfWeek = jstNow.getDay() // 0=日, 1=月
+  const mondayOffset = dayOfWeek === 0 ? -6 : 1 - dayOfWeek
+  const thisMonday = new Date(jstNow)
+  thisMonday.setDate(jstNow.getDate() + mondayOffset)
+  const thisSunday = new Date(thisMonday)
+  thisSunday.setDate(thisMonday.getDate() + 6)
+
+  // 先週
+  const lastMonday = new Date(thisMonday)
+  lastMonday.setDate(thisMonday.getDate() - 7)
+  const lastSunday = new Date(thisMonday)
+  lastSunday.setDate(thisMonday.getDate() - 1)
+
+  // 前月の同じ週（月曜基準で4週間前）
+  const prevMonthMonday = new Date(thisMonday)
+  prevMonthMonday.setDate(thisMonday.getDate() - 28)
+  const prevMonthSunday = new Date(prevMonthMonday)
+  prevMonthSunday.setDate(prevMonthMonday.getDate() + 6)
+
+  const fmtDate = (d: Date) =>
+    `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
+
+  const thisWeekFrom = fmtDate(thisMonday)
+  const thisWeekTo = fmtDate(thisSunday)
+  const lastWeekFrom = fmtDate(lastMonday)
+  const lastWeekTo = fmtDate(lastSunday)
+  const prevMonthWeekFrom = fmtDate(prevMonthMonday)
+  const prevMonthWeekTo = fmtDate(prevMonthSunday)
+
+  // 全3週分を一括取得（最小クエリ）
+  const allWeekFrom = prevMonthWeekFrom < lastWeekFrom ? prevMonthWeekFrom : lastWeekFrom
+  const allDailySales = getDailySales(allWeekFrom, thisWeekTo)
+  const allStoreDailySales = getStoreDailySales(allWeekFrom, thisWeekTo)
+
+  // 祝日マップ
+  const holidayMap = getHolidayMap(allWeekFrom, thisWeekTo)
+
+  // ヘルパー: 日付範囲でフィルタ
+  const filterByRange = (rows: typeof allDailySales, from: string, to: string) =>
+    rows.filter(r => r.date >= from && r.date <= to)
+
+  const buildWeekDays = (rows: typeof allDailySales, mondayDate: Date) => {
+    const days: { date: string; dow: number; dowLabel: string; sales: number; customers: number; holiday: string | null }[] = []
+    for (let i = 0; i < 7; i++) {
+      const d = new Date(mondayDate)
+      d.setDate(mondayDate.getDate() + i)
+      const dateStr = fmtDate(d)
+      const dayData = rows.find(r => r.date === dateStr)
+      const dow = d.getDay()
+      const dowLabels = ['日', '月', '火', '水', '木', '金', '土']
+      days.push({
+        date: dateStr,
+        dow,
+        dowLabel: dowLabels[dow],
+        sales: dayData?.sales ?? 0,
+        customers: dayData?.customers ?? 0,
+        holiday: holidayMap[dateStr] ?? null,
+      })
+    }
+    return days
+  }
+
+  // 店舗別週データ
+  const buildStoreWeekDays = (rows: typeof allStoreDailySales, from: string, to: string) => {
+    const filtered = rows.filter(r => r.date >= from && r.date <= to)
+    const byStore: Record<string, Record<string, { sales: number; customers: number }>> = {}
+    for (const r of filtered) {
+      if (isClosedStore(r.store)) continue
+      if (!byStore[r.store]) byStore[r.store] = {}
+      byStore[r.store][r.date] = { sales: r.sales, customers: r.customers }
+    }
+    return byStore
+  }
+
+  const weeklyData = {
+    thisWeek: {
+      label: `今週 (${thisWeekFrom.slice(5)} 〜 ${thisWeekTo.slice(5)})`,
+      from: thisWeekFrom,
+      to: thisWeekTo,
+      days: buildWeekDays(filterByRange(allDailySales, thisWeekFrom, thisWeekTo), thisMonday),
+      storeData: buildStoreWeekDays(allStoreDailySales, thisWeekFrom, thisWeekTo),
+    },
+    lastWeek: {
+      label: `先週 (${lastWeekFrom.slice(5)} 〜 ${lastWeekTo.slice(5)})`,
+      from: lastWeekFrom,
+      to: lastWeekTo,
+      days: buildWeekDays(filterByRange(allDailySales, lastWeekFrom, lastWeekTo), lastMonday),
+      storeData: buildStoreWeekDays(allStoreDailySales, lastWeekFrom, lastWeekTo),
+    },
+    prevMonthWeek: {
+      label: `前月同週 (${prevMonthWeekFrom.slice(5)} 〜 ${prevMonthWeekTo.slice(5)})`,
+      from: prevMonthWeekFrom,
+      to: prevMonthWeekTo,
+      days: buildWeekDays(filterByRange(allDailySales, prevMonthWeekFrom, prevMonthWeekTo), prevMonthMonday),
+      storeData: buildStoreWeekDays(allStoreDailySales, prevMonthWeekFrom, prevMonthWeekTo),
+    },
+    holidayMap,
+  }
+
   // ── 目標サジェスト ──────────────────────────────────────────────────
   // 各月の目標を席数・成長率・季節変動から提案
   const seasonalIndex = getSeasonalIndex(toYear)
@@ -257,6 +365,7 @@ export async function GET() {
     dowByStore: dowByStoreGrouped,
     dowUtilization,
     dowUtilByStore,
+    weeklyData,
     targetSuggestions,
     suggestedAnnualTotal,
     existingAnnualTarget: annualTarget,

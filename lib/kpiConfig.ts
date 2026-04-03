@@ -150,9 +150,9 @@ const MATSUDATE: ExecutiveConfig = {
     },
     {
       key: 'return_rate',
-      label: 'リターン率',
+      label: 'HPB新規リターン率',
       unit: '%',
-      source: 'auto',
+      source: 'manual',
       quarterly: true,
       mode: 'avg',
       quarterTargets: { 3: 36.3, 4: 38, 1: 40 },
