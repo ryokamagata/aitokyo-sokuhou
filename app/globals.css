@@ -1,3 +1,205 @@
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
+
+/* ─── iPhone最適化 ─────────────────────────────────────── */
+@media (max-width: 480px) {
+  /* 全体の余白を広めに */
+  main {
+    padding-left: 12px !important;
+    padding-right: 12px !important;
+    padding-bottom: 80px !important;
+  }
+
+  /* セクション間の余白を広く */
+  main > .space-y-4 > *,
+  .space-y-4 > * {
+    margin-bottom: 4px;
+  }
+
+  /* カードのパディングを広く・角丸を大きく */
+  .rounded-xl {
+    border-radius: 16px;
+  }
+
+  /* 極小テキストを読みやすく */
+  .text-\[10px\] {
+    font-size: 11px !important;
+    line-height: 1.5 !important;
+  }
+
+  .text-\[9px\] {
+    font-size: 10px !important;
+  }
+
+  .text-\[8px\] {
+    font-size: 9px !important;
+  }
+
+  .text-\[11px\] {
+    font-size: 12px !important;
+  }
+
+  /* 小さいテキストを少し大きく */
+  .text-xs {
+    font-size: 13px !important;
+    line-height: 1.5 !important;
+  }
+
+  /* sm以下のテキストサイズ改善 */
+  .text-sm {
+    font-size: 14px !important;
+    line-height: 1.5 !important;
+  }
+
+  .text-base {
+    font-size: 16px !important;
+  }
+
+  .text-lg {
+    font-size: 19px !important;
+  }
+
+  .text-xl {
+    font-size: 22px !important;
+  }
+
+  .text-2xl {
+    font-size: 26px !important;
+  }
+
+  /* KPIカード内の値を大きく */
+  .bg-gray-800.rounded-xl p.font-bold,
+  .bg-gray-900\/50 p.font-bold {
+    font-size: 17px !important;
+  }
+
+  /* タブボタンの余白を増やす */
+  .bg-gray-800.rounded-lg.p-1 button {
+    padding: 10px 6px !important;
+    font-size: 13px !important;
+  }
+
+  /* グリッドカードのパディング */
+  .bg-gray-800.rounded-xl {
+    padding: 14px !important;
+  }
+
+  .bg-gray-900\/50.rounded-lg {
+    padding: 10px !important;
+  }
+
+  /* テーブルの読みやすさ向上 */
+  table {
+    font-size: 12px !important;
+  }
+
+  table th,
+  table td {
+    padding: 8px 4px !important;
+  }
+
+  /* ボタンのタッチターゲットを大きく（44px以上推奨） */
+  button {
+    min-height: 38px;
+  }
+
+  /* 店舗セレクタボタン */
+  .flex-wrap.gap-1\.5 button {
+    padding: 8px 12px !important;
+    font-size: 12px !important;
+    min-height: 34px;
+  }
+
+  /* グリッド3列 → 数字が見やすいように */
+  .grid-cols-3 {
+    gap: 6px !important;
+  }
+
+  /* 予測カードの文字サイズ */
+  .bg-emerald-900\/20 p.font-bold,
+  .bg-blue-900\/20 p.font-bold,
+  .bg-gray-800\/60 p.font-bold {
+    font-size: 16px !important;
+  }
+
+  /* ヘッダー調整 */
+  h1 {
+    font-size: 20px !important;
+  }
+
+  h2 {
+    font-size: 15px !important;
+  }
+
+  h3 {
+    font-size: 14px !important;
+  }
+
+  h4 {
+    font-size: 13px !important;
+  }
+
+  /* スコアバーを太く */
+  .h-3 {
+    height: 14px !important;
+    border-radius: 7px !important;
+  }
+
+  /* 進捗バーの達成率を太く */
+  .h-1\.5 {
+    height: 8px !important;
+    border-radius: 4px !important;
+  }
+
+  /* バッジ・ステータスタグを大きく */
+  .rounded.border,
+  .rounded-lg.border {
+    padding: 4px 8px !important;
+  }
+
+  /* 週単位チャートのバーを太く */
+  .w-2 {
+    width: 10px !important;
+  }
+
+  /* KPI月別進捗のステータスバッジ */
+  span.rounded[class*="bg-"] {
+    padding: 3px 8px !important;
+    font-size: 10px !important;
+  }
+
+  /* スクロールヒント */
+  .overflow-x-auto {
+    -webkit-overflow-scrolling: touch;
+  }
+
+  /* safe area対応（iPhoneのノッチ・ホームバー） */
+  main {
+    padding-top: env(safe-area-inset-top, 8px) !important;
+    padding-bottom: calc(env(safe-area-inset-bottom, 0px) + 40px) !important;
+  }
+}
+
+/* ─── iPhone SE / 小画面 追加調整 ─────────────────────── */
+@media (max-width: 375px) {
+  .text-\[10px\] {
+    font-size: 10px !important;
+  }
+
+  .text-xs {
+    font-size: 12px !important;
+  }
+
+  .text-sm {
+    font-size: 13px !important;
+  }
+
+  .grid-cols-3 {
+    gap: 4px !important;
+  }
+
+  .bg-gray-800.rounded-xl {
+    padding: 12px !important;
+  }
+}

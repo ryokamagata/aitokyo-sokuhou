@@ -107,47 +107,26 @@ export default function DashboardClient() {
       </div>
 
       {/* メインタブ切替 */}
-      <div className="flex gap-1 bg-gray-800 rounded-lg p-1">
-        <button
-          onClick={() => setMainTab('current')}
-          className={`flex-1 text-sm py-2 px-4 rounded-md transition-colors font-medium ${
-            mainTab === 'current'
-              ? 'bg-blue-600 text-white'
-              : 'text-gray-400 hover:text-gray-200'
-          }`}
-        >
-          今月ダッシュボード
-        </button>
-        <button
-          onClick={() => setMainTab('history')}
-          className={`flex-1 text-sm py-2 px-4 rounded-md transition-colors font-medium ${
-            mainTab === 'history'
-              ? 'bg-blue-600 text-white'
-              : 'text-gray-400 hover:text-gray-200'
-          }`}
-        >
-          過去実績
-        </button>
-        <button
-          onClick={() => setMainTab('analysis')}
-          className={`flex-1 text-sm py-2 px-4 rounded-md transition-colors font-medium ${
-            mainTab === 'analysis'
-              ? 'bg-blue-600 text-white'
-              : 'text-gray-400 hover:text-gray-200'
-          }`}
-        >
-          分析
-        </button>
-        <button
-          onClick={() => setMainTab('kpi')}
-          className={`flex-1 text-sm py-2 px-4 rounded-md transition-colors font-medium ${
-            mainTab === 'kpi'
-              ? 'bg-blue-600 text-white'
-              : 'text-gray-400 hover:text-gray-200'
-          }`}
-        >
-          KPI
-        </button>
+      <div className="flex gap-1 bg-gray-800 rounded-xl p-1.5">
+        {([
+          ['current', '今月', '今月ダッシュボード'],
+          ['history', '実績', '過去実績'],
+          ['analysis', '分析', '分析'],
+          ['kpi', 'KPI', 'KPI'],
+        ] as [MainTab, string, string][]).map(([key, mobileLabel, desktopLabel]) => (
+          <button
+            key={key}
+            onClick={() => setMainTab(key)}
+            className={`flex-1 text-sm py-2.5 px-2 sm:px-4 rounded-lg transition-colors font-bold ${
+              mainTab === key
+                ? 'bg-blue-600 text-white shadow-lg shadow-blue-600/20'
+                : 'text-gray-400 hover:text-gray-200'
+            }`}
+          >
+            <span className="sm:hidden">{mobileLabel}</span>
+            <span className="hidden sm:inline">{desktopLabel}</span>
+          </button>
+        ))}
       </div>
 
       {/* 過去実績タブ */}
