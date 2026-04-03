@@ -3,6 +3,7 @@
 import { Fragment, useCallback, useEffect, useState } from 'react'
 import AnnualReviewPanel from './AnnualReviewPanel'
 import MonthlyTargetPanel from './MonthlyTargetPanel'
+import { isClosedStore } from '@/lib/stores'
 
 type TotalMonthly = { month: string; sales: number; customers: number }
 type StoreMonthRow = { store: string; sales: number; customers: number }
@@ -522,8 +523,15 @@ function StoreHistory({
   for (const rows of Object.values(data.storeByMonth)) {
     for (const r of rows) storeSet.add(r.store)
   }
-  const stores = Array.from(storeSet).sort()
+  // 閉店店舗を末尾に
+  const stores = Array.from(storeSet).sort((a, b) => {
+    const aClosed = isClosedStore(a)
+    const bClosed = isClosedStore(b)
+    if (aClosed !== bClosed) return aClosed ? 1 : -1
+    return a.localeCompare(b)
+  })
 
+  // 選択店舗の実績データ
   const storeMonthlyData: { month: string; sales: number; customers: number }[] = []
   if (selectedStore === 'all') {
     for (const m of data.totalMonthly) {
@@ -539,7 +547,44 @@ function StoreHistory({
     }
   }
 
-  const maxSales = storeMonthlyData.length > 0 ? Math.max(...storeMonthlyData.map(m => m.sales)) : 0
+  // 選択店舗の未来予測を取得
+  const projection = selectedStore !== 'all'
+    ? (data.storeProjections ?? []).find(p => p.store === selectedStore)
+    : null
+
+  // 全店舗合計の場合はdata.projectionを使う
+  const allProjection = selectedStore === 'all' ? data.projection : null
+
+  // 未来月を追加（実績にない月だけ）
+  type MonthRow = { month: string; sales: number; customers: number; isProjected: boolean }
+  const combinedData: MonthRow[] = storeMonthlyData.map(m => ({ ...m, isProjected: false }))
+
+  if (projection) {
+    for (const pd of projection.monthDetails) {
+      if (pd.isProjected) {
+        const monthKey = `${new Date().getFullYear()}-${String(pd.month).padStart(2, '0')}`
+        if (!combinedData.some(m => m.month === monthKey)) {
+          combinedData.push({ month: monthKey, sales: pd.sales, customers: 0, isProjected: true })
+        }
+      }
+    }
+  } else if (allProjection) {
+    for (const pd of allProjection.monthDetails) {
+      if (pd.isProjected) {
+        const monthKey = `${allProjection.currentYear}-${String(pd.month).padStart(2, '0')}`
+        if (!combinedData.some(m => m.month === monthKey)) {
+          combinedData.push({ month: monthKey, sales: pd.sales, customers: pd.customers, isProjected: true })
+        }
+      }
+    }
+  }
+
+  combinedData.sort((a, b) => a.month.localeCompare(b.month))
+
+  const maxSales = combinedData.length > 0 ? Math.max(...combinedData.map(m => m.sales)) : 0
+  const isClosed = selectedStore !== 'all' && isClosedStore(selectedStore)
+  const projectedTotal = projection?.projectedTotal
+  const growthRate = projection?.avgGrowthRate
 
   return (
     <div className="space-y-3">
@@ -554,25 +599,50 @@ function StoreHistory({
           >
             全店舗合計
           </button>
-          {stores.map(store => (
-            <button
-              key={store}
-              onClick={() => onStoreChange(store)}
-              className={`text-xs px-3 py-1.5 rounded-md transition-colors ${
-                selectedStore === store ? 'bg-blue-600 text-white' : 'bg-gray-700 text-gray-400 hover:text-gray-200'
-              }`}
-            >
-              {shortenStoreName(store)}
-            </button>
-          ))}
+          {stores.map(store => {
+            const closed = isClosedStore(store)
+            return (
+              <button
+                key={store}
+                onClick={() => onStoreChange(store)}
+                className={`text-xs px-3 py-1.5 rounded-md transition-colors ${
+                  selectedStore === store
+                    ? 'bg-blue-600 text-white'
+                    : closed
+                    ? 'bg-gray-800 text-gray-600 hover:text-gray-500'
+                    : 'bg-gray-700 text-gray-400 hover:text-gray-200'
+                }`}
+              >
+                {shortenStoreName(store)}{closed ? ' (閉店)' : ''}
+              </button>
+            )
+          })}
         </div>
       </div>
 
       <div className="bg-gray-800 rounded-xl p-3 sm:p-4">
-        <h3 className="text-sm font-medium text-gray-300 mb-3">
-          {selectedStore === 'all' ? '全店舗合計' : shortenStoreName(selectedStore)} 月次推移
-        </h3>
-        {storeMonthlyData.length === 0 ? (
+        <div className="flex items-center justify-between mb-3">
+          <div className="flex items-center gap-2">
+            <h3 className="text-sm font-medium text-gray-300">
+              {selectedStore === 'all' ? '全店舗合計' : shortenStoreName(selectedStore)} 月別内訳・着地予測
+            </h3>
+            {isClosed && (
+              <span className="text-[10px] bg-gray-700 text-gray-500 px-1.5 py-0.5 rounded">閉店</span>
+            )}
+          </div>
+          {projectedTotal !== undefined && !isClosed && (
+            <div className="flex items-center gap-2 text-xs">
+              <span className="text-gray-500">年間着地</span>
+              <span className="font-bold text-cyan-400">{formatOkuMan(projectedTotal)}</span>
+              {growthRate != null && (
+                <span className={`text-[10px] ${growthRate >= 0 ? 'text-green-400' : 'text-red-400'}`}>
+                  {growthRate >= 0 ? '+' : ''}{growthRate.toFixed(1)}%
+                </span>
+              )}
+            </div>
+          )}
+        </div>
+        {combinedData.length === 0 ? (
           <p className="text-gray-500 text-sm text-center py-4">データがありません</p>
         ) : (
           <div className="overflow-x-auto -mx-3 px-3 sm:mx-0 sm:px-0">
@@ -589,18 +659,34 @@ function StoreHistory({
                 </tr>
               </thead>
               <tbody>
-                {storeMonthlyData.map((m, i) => {
-                  const prev = i > 0 ? storeMonthlyData[i - 1] : null
+                {combinedData.map((m, i) => {
+                  const prev = i > 0 ? combinedData[i - 1] : null
                   const diff = prev ? m.sales - prev.sales : null
                   const growth = prev && prev.sales > 0 ? ((m.sales - prev.sales) / prev.sales) * 100 : null
                   const avgSpend = m.customers > 0 ? Math.round(m.sales / m.customers) : 0
                   const barPct = maxSales > 0 ? (m.sales / maxSales) * 100 : 0
                   return (
-                    <tr key={m.month} className="border-b border-gray-700/50 hover:bg-gray-700/30">
-                      <td className="py-1.5 sm:py-2 px-1 sm:px-2 text-gray-300 font-medium whitespace-nowrap">{formatMonth(m.month)}</td>
-                      <td className="py-1.5 sm:py-2 px-1 sm:px-2 text-right text-white font-bold whitespace-nowrap">¥{m.sales.toLocaleString()}</td>
-                      <td className="py-1.5 sm:py-2 px-1 sm:px-2 text-right text-gray-400 hidden sm:table-cell">{m.customers.toLocaleString()}人</td>
-                      <td className="py-1.5 sm:py-2 px-1 sm:px-2 text-right text-gray-400 hidden sm:table-cell">¥{avgSpend.toLocaleString()}</td>
+                    <tr
+                      key={m.month}
+                      className={`border-b border-gray-700/50 ${
+                        m.isProjected ? 'opacity-60' : 'hover:bg-gray-700/30'
+                      }`}
+                    >
+                      <td className="py-1.5 sm:py-2 px-1 sm:px-2 text-gray-300 font-medium whitespace-nowrap">
+                        {formatMonth(m.month)}
+                        {m.isProjected && (
+                          <span className="text-[10px] text-cyan-400 ml-0.5 sm:ml-1">予測</span>
+                        )}
+                      </td>
+                      <td className={`py-1.5 sm:py-2 px-1 sm:px-2 text-right font-bold whitespace-nowrap ${m.isProjected ? 'text-cyan-400' : 'text-white'}`}>
+                        ¥{m.sales.toLocaleString()}
+                      </td>
+                      <td className="py-1.5 sm:py-2 px-1 sm:px-2 text-right text-gray-400 hidden sm:table-cell">
+                        {m.customers > 0 ? `${m.customers.toLocaleString()}人` : m.isProjected ? '—' : '0人'}
+                      </td>
+                      <td className="py-1.5 sm:py-2 px-1 sm:px-2 text-right text-gray-400 hidden sm:table-cell">
+                        {avgSpend > 0 ? `¥${avgSpend.toLocaleString()}` : '—'}
+                      </td>
                       <td className="py-1.5 sm:py-2 px-1 sm:px-2 text-right hidden sm:table-cell">
                         {diff !== null ? (
                           <span className={diff >= 0 ? 'text-green-400' : 'text-red-400'}>
@@ -621,7 +707,7 @@ function StoreHistory({
                       </td>
                       <td className="py-1.5 sm:py-2 px-1 sm:px-2">
                         <div className="w-full h-2 bg-gray-700 rounded-full overflow-hidden">
-                          <div className="h-full bg-blue-500 rounded-full" style={{ width: `${barPct}%` }} />
+                          <div className={`h-full rounded-full ${m.isProjected ? 'bg-cyan-600/60' : 'bg-blue-500'}`} style={{ width: `${barPct}%` }} />
                         </div>
                       </td>
                     </tr>
@@ -632,145 +718,6 @@ function StoreHistory({
           </div>
         )}
       </div>
-
-      {/* 店舗別 年間着地予測 */}
-      {data.storeProjections && data.storeProjections.length > 0 && (
-        <StoreProjectionPanel projections={data.storeProjections} />
-      )}
-    </div>
-  )
-}
-
-// ━━━ 店舗別 年間着地予測 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-
-function StoreProjectionPanel({ projections }: { projections: StoreProjectionData[] }) {
-  const [open, setOpen] = useState(true)
-
-  const activeStores = projections.filter(p => !p.isClosed)
-  const closedStores = projections.filter(p => p.isClosed)
-  const totalProjected = activeStores.reduce((s, p) => s + p.projectedTotal, 0)
-
-  return (
-    <div className="bg-gray-800 rounded-xl overflow-hidden">
-      <button
-        onClick={() => setOpen(!open)}
-        className="w-full flex items-center justify-between p-4 hover:bg-gray-700/50 transition-colors"
-      >
-        <div className="flex flex-wrap items-center gap-2">
-          <span className="text-sm font-medium text-gray-200">店舗別 年間着地予測</span>
-          <span className="text-xs text-gray-500">
-            既存{activeStores.length}店舗 / 合計{formatOkuMan(totalProjected)}
-          </span>
-        </div>
-        <svg
-          className={`w-4 h-4 text-gray-400 transition-transform ${open ? 'rotate-180' : ''}`}
-          fill="none" stroke="currentColor" viewBox="0 0 24 24"
-        >
-          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
-        </svg>
-      </button>
-
-      {open && (
-        <div className="px-3 sm:px-4 pb-4 space-y-2">
-          {/* 営業中店舗 */}
-          {activeStores.map(p => (
-            <StoreProjectionCard key={p.store} data={p} maxTotal={Math.max(...activeStores.map(s => s.projectedTotal))} />
-          ))}
-
-          {/* 閉店店舗 */}
-          {closedStores.length > 0 && (
-            <>
-              <p className="text-[10px] text-gray-600 pt-2">閉店済み</p>
-              {closedStores.map(p => (
-                <StoreProjectionCard key={p.store} data={p} maxTotal={Math.max(...activeStores.map(s => s.projectedTotal))} />
-              ))}
-            </>
-          )}
-        </div>
-      )}
-    </div>
-  )
-}
-
-function StoreProjectionCard({ data, maxTotal }: { data: StoreProjectionData; maxTotal: number }) {
-  const [expanded, setExpanded] = useState(false)
-  const barPct = maxTotal > 0 ? (data.projectedTotal / maxTotal) * 100 : 0
-
-  if (data.isClosed) {
-    return (
-      <div className="bg-gray-900/30 rounded-lg p-3 opacity-50">
-        <div className="flex items-center justify-between">
-          <div className="flex items-center gap-2">
-            <span className="text-xs text-gray-500 font-medium">{shortenStoreName(data.store)}</span>
-            <span className="text-[10px] bg-gray-700 text-gray-500 px-1.5 py-0.5 rounded">閉店</span>
-          </div>
-          {data.ytdTotal > 0 && (
-            <span className="text-xs text-gray-600">実績: {formatOkuMan(data.ytdTotal)}</span>
-          )}
-        </div>
-      </div>
-    )
-  }
-
-  const growthColor = data.avgGrowthRate !== null
-    ? data.avgGrowthRate >= 0 ? 'text-green-400' : 'text-red-400'
-    : 'text-gray-500'
-
-  return (
-    <div className="bg-gray-900/40 rounded-lg p-3 border border-gray-700/30">
-      {/* ヘッダー */}
-      <button
-        onClick={() => setExpanded(!expanded)}
-        className="w-full flex items-center justify-between"
-      >
-        <div className="flex items-center gap-2 min-w-0">
-          <span className="text-xs font-medium text-white truncate">{shortenStoreName(data.store)}</span>
-          {data.avgGrowthRate !== null && (
-            <span className={`text-[10px] font-medium ${growthColor}`}>
-              {data.avgGrowthRate >= 0 ? '+' : ''}{data.avgGrowthRate.toFixed(1)}%
-            </span>
-          )}
-        </div>
-        <div className="flex items-center gap-2 shrink-0">
-          <span className="text-xs font-bold text-white">{formatOkuMan(data.projectedTotal)}</span>
-          <svg
-            className={`w-3 h-3 text-gray-500 transition-transform ${expanded ? 'rotate-180' : ''}`}
-            fill="none" stroke="currentColor" viewBox="0 0 24 24"
-          >
-            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
-          </svg>
-        </div>
-      </button>
-
-      {/* プログレスバー */}
-      <div className="w-full h-1.5 bg-gray-700 rounded-full overflow-hidden mt-2">
-        <div className="h-full bg-blue-500 rounded-full" style={{ width: `${barPct}%` }} />
-      </div>
-
-      {/* 月別内訳（展開時） */}
-      {expanded && data.monthDetails.length > 0 && (
-        <div className="mt-3 overflow-x-auto -mx-3 px-3">
-          <div className="grid grid-cols-6 sm:grid-cols-12 gap-1 min-w-0">
-            {data.monthDetails.map(d => {
-              const maxMonth = Math.max(...data.monthDetails.map(m => m.sales))
-              const h = maxMonth > 0 ? Math.max((d.sales / maxMonth) * 40, 4) : 4
-              return (
-                <div key={d.month} className="flex flex-col items-center gap-0.5">
-                  <span className={`text-[9px] font-medium ${d.isProjected ? 'text-cyan-400' : 'text-gray-400'}`}>
-                    {formatOkuMan(d.sales)}
-                  </span>
-                  <div
-                    className={`w-full rounded-sm ${d.isProjected ? 'bg-cyan-600/50' : 'bg-blue-500/60'}`}
-                    style={{ height: `${h}px` }}
-                  />
-                  <span className="text-[9px] text-gray-600">{d.month}月</span>
-                  {d.isProjected && <span className="text-[7px] text-cyan-600">予</span>}
-                </div>
-              )
-            })}
-          </div>
-        </div>
-      )}
     </div>
   )
 }
