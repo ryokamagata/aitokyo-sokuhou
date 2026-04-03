@@ -85,6 +85,7 @@ type StoreProjectionData = {
   avgGrowthRate: number | null
   monthDetails: { month: number; sales: number; isProjected: boolean }[]
   isClosed: boolean
+  revenueCap: number | null
 }
 
 type SubTab = 'total' | 'store' | 'staff'
@@ -585,6 +586,7 @@ function StoreHistory({
   const isClosed = selectedStore !== 'all' && isClosedStore(selectedStore)
   const projectedTotal = projection?.projectedTotal
   const growthRate = projection?.avgGrowthRate
+  const revenueCap = projection?.revenueCap
 
   return (
     <div className="space-y-3">
@@ -631,12 +633,17 @@ function StoreHistory({
             )}
           </div>
           {projectedTotal !== undefined && !isClosed && (
-            <div className="flex items-center gap-2 text-xs">
+            <div className="flex items-center gap-2 text-xs flex-wrap justify-end">
               <span className="text-gray-500">年間着地</span>
               <span className="font-bold text-cyan-400">{formatOkuMan(projectedTotal)}</span>
               {growthRate != null && (
                 <span className={`text-[10px] ${growthRate >= 0 ? 'text-green-400' : 'text-red-400'}`}>
                   {growthRate >= 0 ? '+' : ''}{growthRate.toFixed(1)}%
+                </span>
+              )}
+              {revenueCap && (
+                <span className="text-[10px] text-orange-400/70">
+                  上限 {formatOkuMan(revenueCap)}/月
                 </span>
               )}
             </div>
@@ -680,6 +687,9 @@ function StoreHistory({
                       </td>
                       <td className={`py-1.5 sm:py-2 px-1 sm:px-2 text-right font-bold whitespace-nowrap ${m.isProjected ? 'text-cyan-400' : 'text-white'}`}>
                         ¥{m.sales.toLocaleString()}
+                        {m.isProjected && revenueCap && m.sales >= revenueCap && (
+                          <span className="text-[9px] text-orange-400 ml-0.5">上限</span>
+                        )}
                       </td>
                       <td className="py-1.5 sm:py-2 px-1 sm:px-2 text-right text-gray-400 hidden sm:table-cell">
                         {m.customers > 0 ? `${m.customers.toLocaleString()}人` : m.isProjected ? '—' : '0人'}

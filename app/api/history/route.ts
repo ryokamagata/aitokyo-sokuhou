@@ -9,7 +9,7 @@ import {
   getSeasonalIndex,
 } from '@/lib/db'
 import { normalizeStaffName } from '@/lib/staffNormalize'
-import { isClosedStore } from '@/lib/stores'
+import { isClosedStore, getStoreRevenueCap } from '@/lib/stores'
 
 export const revalidate = 0
 
@@ -374,6 +374,7 @@ export async function GET() {
     avgGrowthRate: number | null
     monthDetails: StoreProjectionMonth[]
     isClosed: boolean
+    revenueCap: number | null
   }
 
   const storeProjections: StoreProjection[] = (() => {
@@ -413,6 +414,9 @@ export async function GET() {
         ? yoyRates.reduce((a, b) => a + b, 0) / yoyRates.length
         : null
 
+      // 席数ベースの売上上限
+      const revenueCap = getStoreRevenueCap(store)
+
       // 12ヶ月分の予測を作成
       const monthDetails: StoreProjectionMonth[] = []
       let ytdTotal = 0
@@ -424,7 +428,8 @@ export async function GET() {
           const actual = currentYearStore.get(mo)
           if (actual && actual > 0) {
             const daysElapsed = Math.max(today - 1, 1)
-            const estimate = Math.round((actual / daysElapsed) * daysInCurrentMonth)
+            let estimate = Math.round((actual / daysElapsed) * daysInCurrentMonth)
+            if (revenueCap) estimate = Math.min(estimate, revenueCap)
             monthDetails.push({ month: mo, sales: estimate, isProjected: true })
             projectedTotal += estimate
           }
@@ -435,10 +440,11 @@ export async function GET() {
             ytdTotal += actual
             projectedTotal += actual
           } else if (mo > toMonth) {
-            // 未来月: 前年同月 × (1 + 成長率)
+            // 未来月: 前年同月 × (1 + 成長率)、席数上限でキャップ
             const prev = prevYearStore.get(mo)
             if (prev && avgGrowthRate !== null) {
-              const projected = Math.round(prev * (1 + avgGrowthRate))
+              let projected = Math.round(prev * (1 + avgGrowthRate))
+              if (revenueCap) projected = Math.min(projected, revenueCap)
               monthDetails.push({ month: mo, sales: projected, isProjected: true })
               projectedTotal += projected
             }
@@ -464,6 +470,7 @@ export async function GET() {
           avgGrowthRate: avgGrowthRate !== null ? Math.round(avgGrowthRate * 1000) / 10 : null,
           monthDetails,
           isClosed,
+          revenueCap,
         })
       }
     }

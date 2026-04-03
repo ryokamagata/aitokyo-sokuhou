@@ -13,6 +13,7 @@ import {
   getStaffSalesForMonth,
 } from '@/lib/db'
 import { computeForecast } from '@/lib/forecastEngine'
+import { STORES, MAX_REVENUE_PER_SEAT, isClosedStore } from '@/lib/stores'
 import { mergeStaffSales, normalizeStaffName } from '@/lib/staffNormalize'
 import type { DailySales, DashboardData, ForecastDetail, StaffDetailItem } from '@/lib/types'
 
@@ -222,24 +223,31 @@ export async function GET() {
       paceWeight = 0.2 + (monthProgressRate - 0.3) / 0.4 * 0.6
     }
 
-    // 標準予測（日割りペース × YoY のブレンド）
+    // 全店舗合計の売上上限（席数ベース）
+    const totalRevenueCap = STORES
+      .filter(s => !isClosedStore(s.name))
+      .reduce((sum, s) => sum + s.seats * MAX_REVENUE_PER_SEAT, 0)
+
+    // 標準予測（日割りペース × YoY のブレンド）、席数上限でキャップ
     let standard: number
     if (yoyEstimate !== null && yoyEstimate > 0) {
       standard = Math.round(simplePaceEstimate * paceWeight + yoyEstimate * (1 - paceWeight))
     } else {
       standard = simplePaceEstimate
     }
+    standard = Math.min(standard, totalRevenueCap)
 
     // 堅実予測 = 標準の95%（安定した予測幅）
     const conservative = Math.round(standard * 0.95)
 
-    // 高め見込み = max(ペース着地, YoY着地) の103%、または標準の105%
+    // 高め見込み = max(ペース着地, YoY着地) の103%、または標準の105%、席数上限でキャップ
     let optimistic: number
     if (yoyEstimate !== null && yoyEstimate > 0) {
       optimistic = Math.round(Math.max(simplePaceEstimate, yoyEstimate) * 1.03)
     } else {
       optimistic = Math.round(standard * 1.05)
     }
+    optimistic = Math.min(optimistic, totalRevenueCap)
 
     forecastDetail = {
       standard,
