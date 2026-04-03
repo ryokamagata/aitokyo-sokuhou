@@ -408,21 +408,12 @@ async function fetchUtilizationPage(
   startDate: string,
   endDate: string
 ): Promise<string> {
-  // BMの「データ」→「稼働率」ページ
-  // URL パターンは /manage/data/ または /manage/analysis/data
+  // BMの「データ」→「稼働率」ページ: /manage/analysis/occupancyrate
   const params = buildAnalysisParams(startDate, endDate)
-  const url = `${BM_BASE}/manage/data/?${params.toString()}`
-  try {
-    const { response } = await fetchFollowRedirects(url, {}, cookies)
-    if (response.ok) return response.text()
-  } catch {
-    // fallback: try alternative URL pattern
-  }
-  // Alternative URL pattern
-  const url2 = `${BM_BASE}/manage/analysis/data?${params.toString()}`
-  const { response: res2 } = await fetchFollowRedirects(url2, {}, cookies)
-  if (!res2.ok) throw new Error(`HTTP ${res2.status} for utilization`)
-  return res2.text()
+  const url = `${BM_BASE}/manage/analysis/occupancyrate?${params.toString()}`
+  const { response } = await fetchFollowRedirects(url, {}, cookies)
+  if (!response.ok) throw new Error(`HTTP ${response.status} for occupancyrate`)
+  return response.text()
 }
 
 // ─── Analysis fetch ───────────────────────────────────────────────────────────

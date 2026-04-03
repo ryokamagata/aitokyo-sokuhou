@@ -11,10 +11,11 @@ import UploadZone from '@/components/UploadZone'
 import ScrapeButton from '@/components/ScrapeButton'
 import HistoryView from '@/components/HistoryView'
 import AnalysisView from '@/components/AnalysisView'
+import KpiView from '@/components/KpiView'
 import ColumnPanel from '@/components/ColumnPanel'
 import type { DashboardData } from '@/lib/types'
 
-type MainTab = 'current' | 'history' | 'analysis'
+type MainTab = 'current' | 'history' | 'analysis' | 'kpi'
 
 const CONFIDENCE_LABEL = { high: '高', medium: '中', low: '低' } as const
 
@@ -137,6 +138,16 @@ export default function DashboardClient() {
         >
           分析
         </button>
+        <button
+          onClick={() => setMainTab('kpi')}
+          className={`flex-1 text-sm py-2 px-4 rounded-md transition-colors font-medium ${
+            mainTab === 'kpi'
+              ? 'bg-blue-600 text-white'
+              : 'text-gray-400 hover:text-gray-200'
+          }`}
+        >
+          KPI
+        </button>
       </div>
 
       {/* 過去実績タブ */}
@@ -144,6 +155,9 @@ export default function DashboardClient() {
 
       {/* 分析タブ */}
       {mainTab === 'analysis' && <AnalysisView />}
+
+      {/* KPIタブ */}
+      {mainTab === 'kpi' && <KpiView />}
 
       {/* 今月ダッシュボード */}
       {mainTab === 'current' && <>

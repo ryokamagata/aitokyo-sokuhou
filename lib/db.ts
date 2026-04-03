@@ -167,6 +167,16 @@ function runMigrations(db: Database.Database) {
       UNIQUE(date, bm_code)
     );
     CREATE INDEX IF NOT EXISTS idx_sdu_date ON store_daily_utilization(date);
+
+    CREATE TABLE IF NOT EXISTS executive_kpi (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      year INTEGER NOT NULL,
+      month INTEGER NOT NULL,
+      kpi_key TEXT NOT NULL,
+      value REAL NOT NULL DEFAULT 0,
+      updated_at TEXT NOT NULL DEFAULT (datetime('now')),
+      UNIQUE(year, month, kpi_key)
+    );
   `)
 
   // 2026年 月別売上目標のシード（既存データがなければ挿入）
@@ -696,6 +706,49 @@ export function getStoreDayOfWeekSales(fromYear: number, fromMonth: number, toYe
     store: string; dow: number; days: number; totalSales: number; totalCustomers: number;
     avgSales: number; avgCustomers: number
   }[]
+}
+
+// ─── Executive KPI functions ────────────────────────────────────────────────
+
+/** KPI値を取得 */
+export function getKpiValue(year: number, month: number, key: string): number | null {
+  const db = getDB()
+  const row = db.prepare('SELECT value FROM executive_kpi WHERE year=? AND month=? AND kpi_key=?').get(year, month, key) as { value: number } | undefined
+  return row?.value ?? null
+}
+
+/** KPI値を保存 */
+export function setKpiValue(year: number, month: number, key: string, value: number) {
+  const db = getDB()
+  db.prepare(`
+    INSERT INTO executive_kpi(year, month, kpi_key, value)
+    VALUES(?, ?, ?, ?)
+    ON CONFLICT(year, month, kpi_key) DO UPDATE SET value=excluded.value, updated_at=datetime('now')
+  `).run(year, month, key, value)
+}
+
+/** 指定年のKPI値をすべて取得 */
+export function getAllKpiValues(year: number): Record<string, Record<number, number>> {
+  const db = getDB()
+  const rows = db.prepare('SELECT month, kpi_key, value FROM executive_kpi WHERE year=?').all(year) as { month: number; kpi_key: string; value: number }[]
+  const result: Record<string, Record<number, number>> = {}
+  for (const r of rows) {
+    if (!result[r.kpi_key]) result[r.kpi_key] = {}
+    result[r.kpi_key][r.month] = r.value
+  }
+  return result
+}
+
+/** Q期間のKPI合計/平均を取得 */
+export function getKpiForQuarter(year: number, quarter: number, key: string, mode: 'sum' | 'avg' = 'sum'): number | null {
+  const db = getDB()
+  const quarters: Record<number, number[]> = { 1: [10, 11, 12], 2: [1, 2, 3], 3: [4, 5, 6], 4: [7, 8, 9] }
+  const months = quarters[quarter]
+  if (!months) return null
+  const fn = mode === 'sum' ? 'SUM(value)' : 'AVG(value)'
+  const placeholders = months.map(() => '?').join(',')
+  const row = db.prepare(`SELECT ${fn} as result FROM executive_kpi WHERE year=? AND kpi_key=? AND month IN (${placeholders})`).get(year, key, ...months) as { result: number | null } | undefined
+  return row?.result ?? null
 }
 
 /** 稼働率データを保存 */
