@@ -194,8 +194,20 @@ export async function GET() {
   const filterByRange = (rows: typeof allDailySales, from: string, to: string) =>
     rows.filter(r => r.date >= from && r.date <= to)
 
+  // 曜日別平均売上（今週の予測に使用）
+  const dowAvgForForecast: Record<number, number> = {}
+  const dowAvgCustomersForForecast: Record<number, number> = {}
+  for (const d of dowAll) {
+    dowAvgForForecast[d.dow] = d.avgSales
+    dowAvgCustomersForForecast[d.dow] = d.avgCustomers
+  }
+
   const buildWeekDays = (rows: typeof allDailySales, mondayDate: Date) => {
-    const days: { date: string; dow: number; dowLabel: string; sales: number; customers: number; holiday: string | null }[] = []
+    const days: {
+      date: string; dow: number; dowLabel: string; sales: number; customers: number
+      holiday: string | null; forecast: number; forecastCustomers: number
+      isFuture: boolean; isToday: boolean
+    }[] = []
     for (let i = 0; i < 7; i++) {
       const d = new Date(mondayDate)
       d.setDate(mondayDate.getDate() + i)
@@ -203,6 +215,8 @@ export async function GET() {
       const dayData = rows.find(r => r.date === dateStr)
       const dow = d.getDay()
       const dowLabels = ['日', '月', '火', '水', '木', '金', '土']
+      const isFuture = dateStr > todayStr
+      const isToday = dateStr === todayStr
       days.push({
         date: dateStr,
         dow,
@@ -210,6 +224,10 @@ export async function GET() {
         sales: dayData?.sales ?? 0,
         customers: dayData?.customers ?? 0,
         holiday: holidayMap[dateStr] ?? null,
+        forecast: dowAvgForForecast[dow] ?? 0,
+        forecastCustomers: dowAvgCustomersForForecast[dow] ?? 0,
+        isFuture,
+        isToday,
       })
     }
     return days
