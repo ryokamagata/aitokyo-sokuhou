@@ -56,7 +56,10 @@ export async function GET() {
   const now = new Date(new Date().toLocaleString('en-US', { timeZone: 'Asia/Tokyo' }))
   const toYear = now.getFullYear()
   const toMonth = now.getMonth() + 1
-  const today = now.getDate()
+  const calendarToday = now.getDate()
+  const hour = now.getHours()
+  // 22時締め: ダッシュボードと合わせて同じ today を使用
+  const today = hour >= 22 ? calendarToday : calendarToday - 1
   const daysInCurrentMonth = new Date(toYear, toMonth, 0).getDate()
   const currentMonthKey = `${toYear}-${String(toMonth).padStart(2, '0')}`
 
@@ -223,21 +226,26 @@ export async function GET() {
 
       if (currentMonthActual && currentMonthActual.sales > 0) {
         // 当月実績あり → forecastEngineで平日/土日祝ペース着地を算出
+        // ダッシュボードと合わせて 22時締めcutoff でフィルタ
+        const cutoffDate = `${toYear}-${String(toMonth).padStart(2, '0')}-${String(Math.max(today, 0)).padStart(2, '0')}`
         const rawDaily = getScrapedDailySales(toYear, toMonth)
-        const dailySalesForForecast: DailySales[] = rawDaily.map(r => ({
-          date: r.date,
-          dayOfWeek: new Date(r.date + 'T00:00:00').getDay(),
-          totalAmount: r.sales,
-          customers: r.customers,
-          stores: {},
-          staff: {},
-        }))
+        const dailySalesForForecast: DailySales[] = rawDaily
+          .filter(r => today > 0 && r.date <= cutoffDate)
+          .map(r => ({
+            date: r.date,
+            dayOfWeek: new Date(r.date + 'T00:00:00').getDay(),
+            totalAmount: r.sales,
+            customers: r.customers,
+            stores: {},
+            staff: {},
+          }))
         const fc = computeForecast(dailySalesForForecast, toYear, toMonth, today)
         currentMonthEstimate = fc.forecastTotal
 
         // 客数は日割りペースのまま（forecastEngineは売上のみ対象）
-        const daysElapsed = Math.max(today - 1, 1)
-        currentMonthCustEstimate = Math.round((currentMonthActual.customers / daysElapsed) * daysInCurrentMonth)
+        const daysElapsed = Math.max(today, 1)
+        const cutoffCustomers = dailySalesForForecast.reduce((s, d) => s + d.customers, 0)
+        currentMonthCustEstimate = Math.round((cutoffCustomers / daysElapsed) * daysInCurrentMonth)
       } else if (prevYearCurrentMonthData) {
         // 当月データなし → YoYフォールバック
         currentMonthEstimate = avgGrowthRate !== null
@@ -447,7 +455,7 @@ export async function GET() {
       const currentStoreActual = currentYearStore.get(toMonth)
       let currentStoreEstimate: number | null = null
       if (currentStoreActual && currentStoreActual > 0) {
-        const daysElapsed = Math.max(today - 1, 1)
+        const daysElapsed = Math.max(today, 1)
         let estimate = Math.round((currentStoreActual / daysElapsed) * daysInCurrentMonth)
         if (revenueCap) estimate = Math.min(estimate, Math.round(revenueCap * 0.85))
         currentStoreEstimate = estimate
