@@ -256,18 +256,9 @@ export async function GET() {
         : prevYearSales
     }
 
-    // ブレンド比率（月初はYoY重視、精度が上がるにつれペースに移行）
-    // 0-30%: ペース20% / YoY80%
-    // 30-70%: 線形で移行
-    // 70-100%: ペース80% / YoY20%
-    let paceWeight: number
-    if (monthProgressRate < 0.3) {
-      paceWeight = 0.2
-    } else if (monthProgressRate > 0.7) {
-      paceWeight = 0.8
-    } else {
-      paceWeight = 0.2 + (monthProgressRate - 0.3) / 0.4 * 0.6
-    }
+    // ブレンド比率: 当月データがあればペース100%、無い時のみYoY100%にフォールバック
+    const hasActualData = forecast.weekdayActualDays + forecast.weekendActualDays > 0
+    const paceWeight = hasActualData ? 1.0 : 0.0
 
     // 全店舗合計の売上上限（席数ベース）
     const totalRevenueCap = STORES
