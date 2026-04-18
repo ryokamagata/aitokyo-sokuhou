@@ -212,49 +212,36 @@ export async function GET() {
         : null
 
       // ── 今月着地予測 ──
-      // 前月売上 × 前年比変動パターン + 今月実績ペースのブレンド
+      // 当月データがあればペース100%、無い時のみYoYにフォールバック
       const currentMonthActual = currentYearData.get(toMonth)
       const prevYearCurrentMonthData = prevYearData.get(toMonth)
       let currentMonthEstimate: number | null = null
       let currentMonthCustEstimate: number | null = null
 
-      if (prevYearCurrentMonthData) {
-        // 方法1: 前年同月 × (1 + 完了月平均成長率)
-        const yoyEstimate = avgGrowthRate !== null
+      if (currentMonthActual && currentMonthActual.sales > 0) {
+        // 当月実績あり → 日割りペース100%
+        const daysElapsed = Math.max(today - 1, 1) // 締め日考慮: 昨日までのデータ
+        currentMonthEstimate = Math.round((currentMonthActual.sales / daysElapsed) * daysInCurrentMonth)
+        currentMonthCustEstimate = Math.round((currentMonthActual.customers / daysElapsed) * daysInCurrentMonth)
+      } else if (prevYearCurrentMonthData) {
+        // 当月データなし → YoYフォールバック
+        currentMonthEstimate = avgGrowthRate !== null
           ? Math.round(prevYearCurrentMonthData.sales * (1 + avgGrowthRate))
           : prevYearCurrentMonthData.sales
-        const yoyCustEstimate = avgCustomerGrowthRate !== null
+        currentMonthCustEstimate = avgCustomerGrowthRate !== null
           ? Math.round(prevYearCurrentMonthData.customers * (1 + avgCustomerGrowthRate))
           : prevYearCurrentMonthData.customers
-
-        if (currentMonthActual && currentMonthActual.sales > 0) {
-          // 方法2: 今月実績 ÷ 経過日数 × 月日数（日割りペース）
-          const daysElapsed = Math.max(today - 1, 1) // 締め日考慮: 昨日までのデータ
-          const paceEstimate = Math.round((currentMonthActual.sales / daysElapsed) * daysInCurrentMonth)
-          const paceCustEstimate = Math.round((currentMonthActual.customers / daysElapsed) * daysInCurrentMonth)
-
-          // ブレンド: 月が進むほどペースを信頼
-          const monthProgress = daysElapsed / daysInCurrentMonth
-          // 0-30%: ペース20% / YoY80%（月初はYoY重視）
-          // 30-70%: 線形で移行
-          // 70-100%: ペース80% / YoY20%（精度が上がるにつれペースに移行）
-          let paceWeight: number
-          if (monthProgress < 0.3) {
-            paceWeight = 0.2
-          } else if (monthProgress > 0.7) {
-            paceWeight = 0.8
-          } else {
-            paceWeight = 0.2 + (monthProgress - 0.3) / 0.4 * 0.6
-          }
-
-          currentMonthEstimate = Math.round(paceEstimate * paceWeight + yoyEstimate * (1 - paceWeight))
-          currentMonthCustEstimate = Math.round(paceCustEstimate * paceWeight + yoyCustEstimate * (1 - paceWeight))
-        } else {
-          // 今月データなし → YoYのみ
-          currentMonthEstimate = yoyEstimate
-          currentMonthCustEstimate = yoyCustEstimate
-        }
       }
+
+      // 未来月予測のベースライン: 当月ペースを「平均月相当」に正規化
+      const seasonalIndexForProjection = getSeasonalIndex(toYear)
+      const currentMonthSeasonalRatio = seasonalIndexForProjection[toMonth] ?? 1.0
+      const baselineMonthly = currentMonthEstimate !== null && currentMonthSeasonalRatio > 0
+        ? currentMonthEstimate / currentMonthSeasonalRatio
+        : null
+      const baselineCustMonthly = currentMonthCustEstimate !== null && currentMonthSeasonalRatio > 0
+        ? currentMonthCustEstimate / currentMonthSeasonalRatio
+        : null
 
       // 12ヶ月の詳細（完了実績 + 今月予測 + 未来予測）
       const monthDetails: AnnualMonthDetail[] = []
@@ -293,13 +280,29 @@ export async function GET() {
             ytdCustomers += actual.customers
             ytdMonths++
           } else {
-            // 未来月: 前年同月 × (1 + 平均成長率)
-            const prevMonthData = prevYearData.get(mo)
-            if (prevMonthData && avgGrowthRate !== null) {
-              const projSales = Math.round(prevMonthData.sales * (1 + avgGrowthRate))
-              const projCust = avgCustomerGrowthRate !== null
-                ? Math.round(prevMonthData.customers * (1 + avgCustomerGrowthRate))
+            // 未来月: 当月ペースをベースに季節変動率で補正
+            // baseline(平均月相当) × 対象月の季節率
+            const moRatio = seasonalIndexForProjection[mo] ?? 1.0
+            let projSales: number | null = null
+            let projCust = 0
+
+            if (baselineMonthly !== null) {
+              projSales = Math.round(baselineMonthly * moRatio)
+              projCust = baselineCustMonthly !== null
+                ? Math.round(baselineCustMonthly * moRatio)
                 : 0
+            } else {
+              // フォールバック: 当月予測も無い → 前年同月 × (1+成長率)
+              const prevMonthData = prevYearData.get(mo)
+              if (prevMonthData && avgGrowthRate !== null) {
+                projSales = Math.round(prevMonthData.sales * (1 + avgGrowthRate))
+                projCust = avgCustomerGrowthRate !== null
+                  ? Math.round(prevMonthData.customers * (1 + avgCustomerGrowthRate))
+                  : 0
+              }
+            }
+
+            if (projSales !== null) {
               monthDetails.push({
                 month: mo,
                 sales: projSales,
