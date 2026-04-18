@@ -145,13 +145,13 @@ export default function DashboardClient() {
           <div className="grid grid-cols-3 gap-2 sm:gap-3">
             <KpiCard
               label="累計売上"
-              value={formatYen(data.totalSales)}
+              value={formatYenCompact(data.totalSales)}
               sub={`${data.today}日分`}
             />
             <KpiCard
               label="達成率"
               value={data.achievementRate != null ? `${data.achievementRate}%` : '—'}
-              sub={data.monthlyTarget ? `目標 ${formatYen(data.monthlyTarget)}` : '目標未設定'}
+              sub={data.monthlyTarget ? `目標 ${formatYenCompact(data.monthlyTarget)}` : '目標未設定'}
               valueColor={
                 data.achievementRate != null
                   ? data.achievementRate >= 100
@@ -337,38 +337,38 @@ function ForecastDetailSection({ data }: { data: DashboardData }) {
       {/* 3パターンカード */}
       <div className="grid grid-cols-3 gap-1.5 sm:gap-2">
         {/* 高め見込み */}
-        <div className="bg-emerald-900/20 border border-emerald-700/30 rounded-lg p-2 sm:p-3 text-center">
+        <div className="bg-emerald-900/20 border border-emerald-700/30 rounded-lg p-2 sm:p-3 text-center min-w-0">
           <p className="text-[10px] text-emerald-400 mb-0.5 sm:mb-1 font-medium">高め見込み</p>
-          <p className="text-sm sm:text-lg font-bold text-emerald-400">
-            {formatYen(optimistic)}
+          <p className="text-xs sm:text-lg font-bold text-emerald-400 break-all">
+            {formatYenCompact(optimistic)}
           </p>
           {targetDiffOpt !== null && (
-            <p className={`text-[10px] mt-0.5 ${targetDiffOpt >= 0 ? 'text-green-400' : 'text-red-400'}`}>
-              目標差 {targetDiffOpt >= 0 ? '+' : ''}{formatYen(targetDiffOpt)}
+            <p className={`text-[9px] sm:text-[10px] mt-0.5 ${targetDiffOpt >= 0 ? 'text-green-400' : 'text-red-400'} break-all`}>
+              目標差 {targetDiffOpt >= 0 ? '+' : ''}{formatYenCompact(targetDiffOpt)}
             </p>
           )}
         </div>
         {/* 着地予測（標準） */}
-        <div className="bg-blue-900/20 border border-blue-600/30 rounded-lg p-2 sm:p-3 text-center">
+        <div className="bg-blue-900/20 border border-blue-600/30 rounded-lg p-2 sm:p-3 text-center min-w-0">
           <p className="text-[10px] text-blue-300 mb-0.5 sm:mb-1 font-medium">着地予測</p>
-          <p className="text-sm sm:text-lg font-bold text-white">
-            {formatYen(standard)}
+          <p className="text-xs sm:text-lg font-bold text-white break-all">
+            {formatYenCompact(standard)}
           </p>
           {targetDiffStd !== null && (
-            <p className={`text-[10px] mt-0.5 ${targetDiffStd >= 0 ? 'text-green-400' : 'text-red-400'}`}>
-              目標差 {targetDiffStd >= 0 ? '+' : ''}{formatYen(targetDiffStd)}
+            <p className={`text-[9px] sm:text-[10px] mt-0.5 ${targetDiffStd >= 0 ? 'text-green-400' : 'text-red-400'} break-all`}>
+              目標差 {targetDiffStd >= 0 ? '+' : ''}{formatYenCompact(targetDiffStd)}
             </p>
           )}
         </div>
         {/* 堅実ライン */}
-        <div className="bg-gray-800/60 border border-gray-600/30 rounded-lg p-2 sm:p-3 text-center">
+        <div className="bg-gray-800/60 border border-gray-600/30 rounded-lg p-2 sm:p-3 text-center min-w-0">
           <p className="text-[10px] text-gray-400 mb-0.5 sm:mb-1 font-medium">堅実ライン</p>
-          <p className="text-sm sm:text-lg font-bold text-gray-300">
-            {formatYen(conservative)}
+          <p className="text-xs sm:text-lg font-bold text-gray-300 break-all">
+            {formatYenCompact(conservative)}
           </p>
           {targetDiffCon !== null && (
-            <p className={`text-[10px] mt-0.5 ${targetDiffCon >= 0 ? 'text-green-400' : 'text-red-400'}`}>
-              目標差 {targetDiffCon >= 0 ? '+' : ''}{formatYen(targetDiffCon)}
+            <p className={`text-[9px] sm:text-[10px] mt-0.5 ${targetDiffCon >= 0 ? 'text-green-400' : 'text-red-400'} break-all`}>
+              目標差 {targetDiffCon >= 0 ? '+' : ''}{formatYenCompact(targetDiffCon)}
             </p>
           )}
         </div>
@@ -507,4 +507,19 @@ function EmptyState() {
 
 function formatYen(n: number): string {
   return `¥${n.toLocaleString()}`
+}
+
+/** 億/万単位でコンパクトに表示（モバイル幅対応）。例: ¥10億4,610万 */
+function formatYenCompact(n: number): string {
+  const sign = n < 0 ? '-' : ''
+  const abs = Math.abs(n)
+  if (abs >= 100_000_000) {
+    const oku = Math.floor(abs / 100_000_000)
+    const man = Math.floor((abs % 100_000_000) / 10_000)
+    return `${sign}¥${oku}億${man > 0 ? man.toLocaleString() + '万' : ''}`
+  }
+  if (abs >= 10_000) {
+    return `${sign}¥${Math.round(abs / 10_000).toLocaleString()}万`
+  }
+  return `${sign}¥${abs.toLocaleString()}`
 }

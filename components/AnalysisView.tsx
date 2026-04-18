@@ -206,19 +206,20 @@ function DowPanel({
   const prevMonthDays = getWeekDays(weekly.prevMonthWeek)
 
   // 実績 + 未来日は予測を加算
+  // 今日は「着地予測」を採用(現在進行形の実績ではなく、全日分のDOW平均)
+  // これにより今週合計が前週(全日実績)と公平に比較できる
   const weekTotal = (days: WeekDay[]) => days.reduce((s, d) => s + d.sales, 0)
   const weekCustomers = (days: WeekDay[]) => days.reduce((s, d) => s + d.customers, 0)
   const weekTotalWithForecast = (days: WeekDay[]) =>
-    days.reduce((s, d) => s + ((d.isFuture || (d.isToday && d.sales === 0)) ? d.forecast : d.sales), 0)
+    days.reduce((s, d) => s + ((d.isFuture || d.isToday) ? d.forecast : d.sales), 0)
   const weekCustomersWithForecast = (days: WeekDay[]) =>
-    days.reduce((s, d) => s + ((d.isFuture || (d.isToday && d.sales === 0)) ? d.forecastCustomers : d.customers), 0)
+    days.reduce((s, d) => s + ((d.isFuture || d.isToday) ? d.forecastCustomers : d.customers), 0)
 
-  const thisActualTotal = weekTotal(thisWeekDays)
   const thisForecastTotal = weekTotalWithForecast(thisWeekDays)
   const thisTotal = thisForecastTotal
   const lastTotal = weekTotal(lastWeekDays)
   const prevTotal = weekTotal(prevMonthDays)
-  const hasFutureDays = thisWeekDays.some(d => d.isFuture)
+  const hasFutureDays = thisWeekDays.some(d => d.isFuture || d.isToday)
 
   const diffPct = (current: number, prev: number) => {
     if (prev === 0) return null
@@ -226,7 +227,7 @@ function DowPanel({
   }
 
   const maxSalesInWeeks = Math.max(
-    ...thisWeekDays.map(d => (d.isFuture || (d.isToday && d.sales === 0)) ? d.forecast : d.sales),
+    ...thisWeekDays.map(d => (d.isFuture || d.isToday) ? d.forecast : d.sales),
     ...lastWeekDays.map(d => d.sales),
     ...prevMonthDays.map(d => d.sales),
     1
@@ -264,12 +265,16 @@ function DowPanel({
         <div className="bg-gray-800 rounded-xl p-3 border border-cyan-500/30">
           <p className="text-[10px] text-gray-500">今週{hasFutureDays ? '（実績+予測）' : ''}</p>
           <p className="text-lg font-bold text-cyan-400">{formatMan(thisForecastTotal)}</p>
-          {hasFutureDays && (
-            <p className="text-[10px] text-gray-500">
-              実績 {formatMan(thisActualTotal)}
-              <span className="text-yellow-400 ml-1">+ 予測 {formatMan(thisForecastTotal - thisActualTotal)}</span>
-            </p>
-          )}
+          {hasFutureDays && (() => {
+            // 完了日のみの実績合計（今日・未来日は除く）
+            const completedActual = thisWeekDays.filter(d => !d.isToday && !d.isFuture).reduce((s, d) => s + d.sales, 0)
+            return (
+              <p className="text-[10px] text-gray-500">
+                実績 {formatMan(completedActual)}
+                <span className="text-yellow-400 ml-1">+ 予測 {formatMan(thisForecastTotal - completedActual)}</span>
+              </p>
+            )
+          })()}
           <p className="text-[10px] text-gray-500">{weekCustomersWithForecast(thisWeekDays).toLocaleString()}人</p>
         </div>
         {[
@@ -369,13 +374,14 @@ function DowPanel({
               {thisWeekDays.map((d, i) => {
                 const lastD = lastWeekDays[i]
                 const prevD = prevMonthDays[i]
-                const showForecast = d.isFuture || (d.isToday && d.sales === 0)
+                // 今日も着地予測扱い（実績は別枠で表示）
+                const showForecast = d.isFuture || d.isToday
                 const displaySales = showForecast ? d.forecast : d.sales
                 const displayCustomers = showForecast ? d.forecastCustomers : d.customers
                 const salesDiff = displaySales - (lastD?.sales ?? 0)
                 const salesDiffPct = diffPct(displaySales, lastD?.sales ?? 0)
                 return (
-                  <tr key={d.date} className={`border-b border-gray-700/50 hover:bg-gray-700/30 ${showForecast ? 'opacity-75' : ''} ${d.isToday ? 'bg-cyan-900/10' : ''}`}>
+                  <tr key={d.date} className={`border-b border-gray-700/50 hover:bg-gray-700/30 ${d.isFuture ? 'opacity-75' : ''} ${d.isToday ? 'bg-cyan-900/10' : ''}`}>
                     <td className="py-1.5 px-1">
                       <div className="flex items-center gap-1">
                         <span className={`font-bold ${showForecast ? 'text-yellow-400/60' : DOW_COLORS[d.dow]}`}>{d.dowLabel}</span>
@@ -389,7 +395,12 @@ function DowPanel({
                     </td>
                     <td className="py-1.5 px-1 text-right font-bold">
                       {showForecast ? (
-                        <span className="text-yellow-400/80">{d.forecast > 0 ? formatMan(d.forecast) : '—'}</span>
+                        <div>
+                          <span className="text-yellow-400/80">{d.forecast > 0 ? formatMan(d.forecast) : '—'}</span>
+                          {d.isToday && d.sales > 0 && (
+                            <div className="text-[9px] text-cyan-400/80 font-normal">実績 {formatMan(d.sales)}</div>
+                          )}
+                        </div>
                       ) : d.sales > 0 ? (
                         <span className="text-white">{formatMan(d.sales)}</span>
                       ) : <span className="text-gray-600">—</span>}
