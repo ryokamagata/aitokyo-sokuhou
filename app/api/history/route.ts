@@ -7,9 +7,12 @@ import {
   getStoreOpeningPlans,
   getStoreOpeningRevenue,
   getSeasonalIndex,
+  getScrapedDailySales,
 } from '@/lib/db'
 import { normalizeStaffName } from '@/lib/staffNormalize'
 import { isClosedStore, getStoreRevenueCap } from '@/lib/stores'
+import { computeForecast } from '@/lib/forecastEngine'
+import type { DailySales } from '@/lib/types'
 
 export const revalidate = 0
 
@@ -212,16 +215,28 @@ export async function GET() {
         : null
 
       // ── 今月着地予測 ──
-      // 当月データがあればペース100%、無い時のみYoYにフォールバック
+      // ダッシュボードと同じく forecastEngine (平日/土日祝ペース) を使用
       const currentMonthActual = currentYearData.get(toMonth)
       const prevYearCurrentMonthData = prevYearData.get(toMonth)
       let currentMonthEstimate: number | null = null
       let currentMonthCustEstimate: number | null = null
 
       if (currentMonthActual && currentMonthActual.sales > 0) {
-        // 当月実績あり → 日割りペース100%
-        const daysElapsed = Math.max(today - 1, 1) // 締め日考慮: 昨日までのデータ
-        currentMonthEstimate = Math.round((currentMonthActual.sales / daysElapsed) * daysInCurrentMonth)
+        // 当月実績あり → forecastEngineで平日/土日祝ペース着地を算出
+        const rawDaily = getScrapedDailySales(toYear, toMonth)
+        const dailySalesForForecast: DailySales[] = rawDaily.map(r => ({
+          date: r.date,
+          dayOfWeek: new Date(r.date + 'T00:00:00').getDay(),
+          totalAmount: r.sales,
+          customers: r.customers,
+          stores: {},
+          staff: {},
+        }))
+        const fc = computeForecast(dailySalesForForecast, toYear, toMonth, today)
+        currentMonthEstimate = fc.forecastTotal
+
+        // 客数は日割りペースのまま（forecastEngineは売上のみ対象）
+        const daysElapsed = Math.max(today - 1, 1)
         currentMonthCustEstimate = Math.round((currentMonthActual.customers / daysElapsed) * daysInCurrentMonth)
       } else if (prevYearCurrentMonthData) {
         // 当月データなし → YoYフォールバック
