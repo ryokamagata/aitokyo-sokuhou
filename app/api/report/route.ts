@@ -78,11 +78,8 @@ export async function GET() {
     ? Math.round(prevYearSales * (1 + yoyRate))
     : null
 
-  // ブレンド予測
-  const monthProgress = today / daysInMonth
-  let paceWeight = 0.2
-  if (monthProgress > 0.7) paceWeight = 0.8
-  else if (monthProgress > 0.3) paceWeight = 0.2 + (monthProgress - 0.3) / 0.4 * 0.6
+  // ブレンド: 当月データがあればペース100%、無い時のみYoY100%にフォールバック
+  const paceWeight = currentSales > 0 ? 1.0 : 0.0
 
   const totalSeats = STORES.filter(s => !isClosedStore(s.name)).reduce((s, st) => s + st.seats, 0)
   const totalCeiling = totalSeats * MAX_REVENUE_PER_SEAT

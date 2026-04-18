@@ -388,6 +388,9 @@ export async function GET() {
       storeYearMonth.get(row.store)!.set(row.month, { sales: row.sales, customers: row.customers })
     }
 
+    const seasonalIndexForStores = getSeasonalIndex(toYear)
+    const currentMonthRatio = seasonalIndexForStores[toMonth] ?? 1.0
+
     const results: StoreProjection[] = []
 
     for (const [store, monthMap] of storeYearMonth) {
@@ -425,16 +428,25 @@ export async function GET() {
       let ytdTotal = 0
       let projectedTotal = 0
 
+      // 店舗の今月着地ペースを先に算出 → 未来月のベースとして使用
+      const currentStoreActual = currentYearStore.get(toMonth)
+      let currentStoreEstimate: number | null = null
+      if (currentStoreActual && currentStoreActual > 0) {
+        const daysElapsed = Math.max(today - 1, 1)
+        let estimate = Math.round((currentStoreActual / daysElapsed) * daysInCurrentMonth)
+        if (revenueCap) estimate = Math.min(estimate, Math.round(revenueCap * 0.85))
+        currentStoreEstimate = estimate
+      }
+      const storeBaselineMonthly = currentStoreEstimate !== null && currentMonthRatio > 0
+        ? currentStoreEstimate / currentMonthRatio
+        : null
+
       for (let mo = 1; mo <= 12; mo++) {
         if (mo === toMonth) {
           // 今月: 日割りペースで着地予測
-          const actual = currentYearStore.get(mo)
-          if (actual && actual > 0) {
-            const daysElapsed = Math.max(today - 1, 1)
-            let estimate = Math.round((actual / daysElapsed) * daysInCurrentMonth)
-            if (revenueCap) estimate = Math.min(estimate, Math.round(revenueCap * 0.85))
-            monthDetails.push({ month: mo, sales: estimate, isProjected: true })
-            projectedTotal += estimate
+          if (currentStoreEstimate !== null) {
+            monthDetails.push({ month: mo, sales: currentStoreEstimate, isProjected: true })
+            projectedTotal += currentStoreEstimate
           }
         } else {
           const actual = currentYearStore.get(mo)
@@ -443,12 +455,19 @@ export async function GET() {
             ytdTotal += actual
             projectedTotal += actual
           } else if (mo > toMonth) {
-            // 未来月: 前年同月 × (1 + 成長率)、席数上限でキャップ
-            const prev = prevYearStore.get(mo)
-            if (prev && avgGrowthRate !== null) {
-              let projected = Math.round(prev * (1 + avgGrowthRate))
+            // 未来月: 当月ペース × 季節変動率、無い時のみ前年同月×(1+成長率) にフォールバック
+            const moRatio = seasonalIndexForStores[mo] ?? 1.0
+            let projected: number | null = null
+            if (storeBaselineMonthly !== null) {
+              projected = Math.round(storeBaselineMonthly * moRatio)
+            } else {
+              const prev = prevYearStore.get(mo)
+              if (prev && avgGrowthRate !== null) {
+                projected = Math.round(prev * (1 + avgGrowthRate))
+              }
+            }
+            if (projected !== null) {
               if (revenueCap) {
-                // 席単価上限の85%を現実的な上限とする（MAX到達は稀）
                 const realisticCap = Math.round(revenueCap * 0.85)
                 projected = Math.min(projected, realisticCap)
               }
