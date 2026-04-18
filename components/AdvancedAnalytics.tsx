@@ -146,7 +146,7 @@ type ForecastAccuracy = {
   dowAccuracy: DowAccuracy[]
 }
 
-type AnalyticsData = {
+export type AnalyticsData = {
   customerRepeat: CustomerRepeat
   staffProductivity: StaffProductivity
   storeBenchmark: StoreBenchmarkRow[]
@@ -285,7 +285,7 @@ function RepeatPanel({ data }: { data: AnalyticsData }) {
   )
 }
 
-function StaffPanel({ data }: { data: AnalyticsData }) {
+export function StaffPanel({ data }: { data: AnalyticsData }) {
   const growth = [...data.staffProductivity.growth].filter(g => g.growthRate !== null && g.growthRate !== undefined).sort((a, b) => (b.growthRate ?? 0) - (a.growthRate ?? 0))
   const currentMonth = [...data.staffProductivity.currentMonth].sort((a, b) => b.sales - a.sales)
   const top20 = currentMonth.slice(0, 20)
@@ -693,7 +693,7 @@ function AbcPanel({ data }: { data: AnalyticsData }) {
   )
 }
 
-function ForecastPanel({ data }: { data: AnalyticsData }) {
+export function ForecastPanel({ data }: { data: AnalyticsData }) {
   const fa = data.forecastAccuracy
   const months = fa?.months ?? []
   const dowAccuracy = fa?.dowAccuracy ?? []

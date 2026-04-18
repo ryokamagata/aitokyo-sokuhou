@@ -1,7 +1,7 @@
 'use client'
 
 import { useEffect, useState } from 'react'
-import AdvancedAnalytics from './AdvancedAnalytics'
+import { StaffPanel, ForecastPanel, type AnalyticsData } from './AdvancedAnalytics'
 
 type DecompositionRow = {
   month: string
@@ -94,7 +94,7 @@ type AnalysisData = {
   storePlansSummary: StorePlanSummary[]
 }
 
-type SubTab = 'decomposition' | 'dow' | 'target' | 'advanced'
+type SubTab = 'dow' | 'target' | 'staff' | 'forecast'
 
 function formatMan(n: number): string {
   if (Math.abs(n) >= 100_000_000) return `${(n / 100_000_000).toFixed(2)}億`
@@ -117,13 +117,17 @@ function shortenStoreName(name: string): string {
 
 export default function AnalysisView() {
   const [data, setData] = useState<AnalysisData | null>(null)
+  const [analyticsData, setAnalyticsData] = useState<AnalyticsData | null>(null)
   const [loading, setLoading] = useState(true)
+  const [subTab, setSubTab] = useState<SubTab>('dow')
   const [selectedStore, setSelectedStore] = useState<string>('all')
 
   useEffect(() => {
-    fetch('/api/analysis')
-      .then(r => r.json())
-      .then(d => { setData(d); setLoading(false) })
+    Promise.all([
+      fetch('/api/analysis').then(r => r.json()),
+      fetch('/api/analytics').then(r => r.json()),
+    ])
+      .then(([a, b]) => { setData(a); setAnalyticsData(b); setLoading(false) })
       .catch(() => setLoading(false))
   }, [])
 
@@ -131,152 +135,39 @@ export default function AnalysisView() {
   if (!data) return <div className="text-red-400 text-sm text-center py-8">データ取得に失敗しました</div>
 
   return (
-    <div className="space-y-8">
-      <section>
-        <h2 className="text-sm font-bold text-gray-200 mb-3 pb-2 border-b border-gray-700">客単価×客数 分解</h2>
-        <DecompositionPanel data={data} selectedStore={selectedStore} onStoreChange={setSelectedStore} />
-      </section>
-      <section>
-        <h2 className="text-sm font-bold text-gray-200 mb-3 pb-2 border-b border-gray-700">曜日別パターン</h2>
-        <DowPanel data={data} selectedStore={selectedStore} onStoreChange={setSelectedStore} />
-      </section>
-      <section>
-        <h2 className="text-sm font-bold text-gray-200 mb-3 pb-2 border-b border-gray-700">目標サジェスト</h2>
-        <TargetSuggestPanel data={data} />
-      </section>
-      <section>
-        <h2 className="text-sm font-bold text-gray-200 mb-3 pb-2 border-b border-gray-700">詳細分析</h2>
-        <AdvancedAnalytics />
-      </section>
-    </div>
-  )
-}
-
-// ─── 客単価×客数 分解パネル ──────────────────────────────────────────
-
-function DecompositionPanel({
-  data, selectedStore, onStoreChange,
-}: {
-  data: AnalysisData
-  selectedStore: string
-  onStoreChange: (s: string) => void
-}) {
-  const rows = selectedStore === 'all'
-    ? data.priceVolumeDecomposition
-    : data.storeDecomposition[selectedStore] ?? []
-
-  const stores = Object.keys(data.storeDecomposition)
-
-  return (
-    <div className="space-y-3">
-      {/* 店舗セレクタ */}
-      <div className="bg-gray-800 rounded-xl p-4">
-        <div className="flex flex-wrap gap-1.5">
+    <div className="space-y-4">
+      {/* サブタブ */}
+      <div className="grid grid-cols-4 gap-1 bg-gray-800 rounded-lg p-1">
+        {([
+          ['dow', '曜日別パターン'],
+          ['target', '目標サジェスト'],
+          ['staff', 'スタッフ生産性'],
+          ['forecast', '予測精度'],
+        ] as [SubTab, string][]).map(([key, label]) => (
           <button
-            onClick={() => onStoreChange('all')}
-            className={`text-xs px-3 py-1.5 rounded-md transition-colors ${
-              selectedStore === 'all' ? 'bg-blue-600 text-white' : 'bg-gray-700 text-gray-400 hover:text-gray-200'
+            key={key}
+            onClick={() => setSubTab(key)}
+            className={`text-xs sm:text-sm py-2 px-2 sm:px-4 rounded-md transition-colors font-medium ${
+              subTab === key ? 'bg-blue-600 text-white' : 'text-gray-400 hover:text-gray-200'
             }`}
           >
-            全店舗合計
+            {label}
           </button>
-          {stores.map(store => (
-            <button
-              key={store}
-              onClick={() => onStoreChange(store)}
-              className={`text-xs px-3 py-1.5 rounded-md transition-colors ${
-                selectedStore === store ? 'bg-blue-600 text-white' : 'bg-gray-700 text-gray-400 hover:text-gray-200'
-              }`}
-            >
-              {shortenStoreName(store)}
-            </button>
-          ))}
-        </div>
+        ))}
       </div>
 
-      {/* 分解テーブル */}
-      <div className="bg-gray-800 rounded-xl p-3 sm:p-4">
-        <h3 className="text-sm font-medium text-gray-300 mb-3">
-          売上変動の分解分析（客単価要因 vs 客数要因）
-        </h3>
-        {rows.length === 0 ? (
-          <p className="text-gray-500 text-sm text-center py-4">データがありません</p>
-        ) : (
-          <div className="overflow-x-auto -mx-3 px-3 sm:mx-0 sm:px-0">
-            <table className="w-full text-xs">
-              <thead>
-                <tr className="text-gray-500 border-b border-gray-700">
-                  <th className="text-left py-2 px-1">月</th>
-                  <th className="text-right py-2 px-1">売上</th>
-                  <th className="text-right py-2 px-1">客数</th>
-                  <th className="text-right py-2 px-1">客単価</th>
-                  <th className="text-right py-2 px-1">単価効果</th>
-                  <th className="text-right py-2 px-1">客数効果</th>
-                  <th className="py-2 px-1 w-24">内訳</th>
-                </tr>
-              </thead>
-              <tbody>
-                {rows.map(r => {
-                  const total = (r.priceEffect !== null && r.volumeEffect !== null)
-                    ? Math.abs(r.priceEffect) + Math.abs(r.volumeEffect)
-                    : 0
-                  const pricePct = total > 0 && r.priceEffect !== null
-                    ? (r.priceEffect / total) * 100
-                    : 0
-                  const volumePct = total > 0 && r.volumeEffect !== null
-                    ? (r.volumeEffect / total) * 100
-                    : 0
-
-                  return (
-                    <tr key={r.month} className="border-b border-gray-700/50 hover:bg-gray-700/30">
-                      <td className="py-1.5 px-1 text-gray-300 font-medium">
-                        {r.month.replace(/^\d{4}-/, '').replace(/^0/, '')}月
-                      </td>
-                      <td className="py-1.5 px-1 text-right text-white font-bold">{formatMan(r.sales)}</td>
-                      <td className="py-1.5 px-1 text-right text-gray-400">{r.customers.toLocaleString()}人</td>
-                      <td className="py-1.5 px-1 text-right text-gray-300">{formatYen(r.unitPrice)}</td>
-                      <td className="py-1.5 px-1 text-right">
-                        {r.priceEffect !== null ? (
-                          <span className={r.priceEffect >= 0 ? 'text-green-400' : 'text-red-400'}>
-                            {r.priceEffect >= 0 ? '+' : ''}{formatMan(r.priceEffect)}
-                          </span>
-                        ) : <span className="text-gray-600">—</span>}
-                      </td>
-                      <td className="py-1.5 px-1 text-right">
-                        {r.volumeEffect !== null ? (
-                          <span className={r.volumeEffect >= 0 ? 'text-green-400' : 'text-red-400'}>
-                            {r.volumeEffect >= 0 ? '+' : ''}{formatMan(r.volumeEffect)}
-                          </span>
-                        ) : <span className="text-gray-600">—</span>}
-                      </td>
-                      <td className="py-1.5 px-1">
-                        {total > 0 ? (
-                          <div className="flex h-3 rounded-full overflow-hidden bg-gray-700">
-                            <div
-                              className={`${r.priceEffect! >= 0 ? 'bg-purple-500' : 'bg-purple-800'}`}
-                              style={{ width: `${Math.abs(pricePct)}%` }}
-                              title={`単価 ${pricePct >= 0 ? '+' : ''}${pricePct.toFixed(0)}%`}
-                            />
-                            <div
-                              className={`${r.volumeEffect! >= 0 ? 'bg-cyan-500' : 'bg-cyan-800'}`}
-                              style={{ width: `${Math.abs(volumePct)}%` }}
-                              title={`客数 ${volumePct >= 0 ? '+' : ''}${volumePct.toFixed(0)}%`}
-                            />
-                          </div>
-                        ) : null}
-                      </td>
-                    </tr>
-                  )
-                })}
-              </tbody>
-            </table>
-            <div className="flex gap-4 mt-2 text-[10px] text-gray-500">
-              <span className="flex items-center gap-1"><span className="w-2 h-2 rounded bg-purple-500 inline-block" /> 客単価要因</span>
-              <span className="flex items-center gap-1"><span className="w-2 h-2 rounded bg-cyan-500 inline-block" /> 客数要因</span>
-            </div>
-          </div>
-        )}
-      </div>
+      {subTab === 'dow' && (
+        <DowPanel data={data} selectedStore={selectedStore} onStoreChange={setSelectedStore} />
+      )}
+      {subTab === 'target' && (
+        <TargetSuggestPanel data={data} />
+      )}
+      {subTab === 'staff' && (
+        analyticsData ? <StaffPanel data={analyticsData} /> : <div className="text-gray-400 text-sm text-center py-8">読み込み中...</div>
+      )}
+      {subTab === 'forecast' && (
+        analyticsData ? <ForecastPanel data={analyticsData} /> : <div className="text-gray-400 text-sm text-center py-8">読み込み中...</div>
+      )}
     </div>
   )
 }

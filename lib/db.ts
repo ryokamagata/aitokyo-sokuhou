@@ -690,17 +690,23 @@ export function getDayOfWeekSales(fromYear: number, fromMonth: number, toYear: n
   const db = getDB()
   const fromPrefix = `${fromYear}-${String(fromMonth).padStart(2, '0')}-01`
   const toPrefix = `${toYear}-${String(toMonth).padStart(2, '0')}-31`
-  // SQLiteのstrftime('%w', date)は 0=日, 1=月, ... 6=土
+  // 日毎に集約してから曜日平均を取る（重複行や複数bm_code対策）
   return db.prepare(`
-    SELECT CAST(strftime('%w', date) AS INTEGER) as dow,
-           COUNT(DISTINCT date) as days,
-           SUM(sales) as totalSales,
-           SUM(customers) as totalCustomers,
-           ROUND(1.0 * SUM(sales) / COUNT(DISTINCT date)) as avgSales,
-           ROUND(1.0 * SUM(customers) / COUNT(DISTINCT date)) as avgCustomers
-    FROM store_daily_sales
-    WHERE date >= ? AND date <= ?
-    GROUP BY CAST(strftime('%w', date) AS INTEGER)
+    SELECT dow, COUNT(*) as days,
+           SUM(salesPerDay) as totalSales,
+           SUM(customersPerDay) as totalCustomers,
+           ROUND(AVG(salesPerDay)) as avgSales,
+           ROUND(AVG(customersPerDay)) as avgCustomers
+    FROM (
+      SELECT date,
+             CAST(strftime('%w', date) AS INTEGER) as dow,
+             SUM(sales) as salesPerDay,
+             SUM(customers) as customersPerDay
+      FROM store_daily_sales
+      WHERE date >= ? AND date <= ?
+      GROUP BY date
+    ) sub
+    GROUP BY dow
     ORDER BY dow ASC
   `).all(fromPrefix, toPrefix) as {
     dow: number; days: number; totalSales: number; totalCustomers: number;
@@ -713,17 +719,23 @@ export function getStoreDayOfWeekSales(fromYear: number, fromMonth: number, toYe
   const db = getDB()
   const fromPrefix = `${fromYear}-${String(fromMonth).padStart(2, '0')}-01`
   const toPrefix = `${toYear}-${String(toMonth).padStart(2, '0')}-31`
+  // 日毎に店舗単位で集約してから曜日平均を取る（重複行や複数bm_code対策）
   return db.prepare(`
-    SELECT store,
-           CAST(strftime('%w', date) AS INTEGER) as dow,
-           COUNT(DISTINCT date) as days,
-           SUM(sales) as totalSales,
-           SUM(customers) as totalCustomers,
-           ROUND(1.0 * SUM(sales) / COUNT(DISTINCT date)) as avgSales,
-           ROUND(1.0 * SUM(customers) / COUNT(DISTINCT date)) as avgCustomers
-    FROM store_daily_sales
-    WHERE date >= ? AND date <= ?
-    GROUP BY store, CAST(strftime('%w', date) AS INTEGER)
+    SELECT store, dow, COUNT(*) as days,
+           SUM(salesPerDay) as totalSales,
+           SUM(customersPerDay) as totalCustomers,
+           ROUND(AVG(salesPerDay)) as avgSales,
+           ROUND(AVG(customersPerDay)) as avgCustomers
+    FROM (
+      SELECT store, date,
+             CAST(strftime('%w', date) AS INTEGER) as dow,
+             SUM(sales) as salesPerDay,
+             SUM(customers) as customersPerDay
+      FROM store_daily_sales
+      WHERE date >= ? AND date <= ?
+      GROUP BY store, date
+    ) sub
+    GROUP BY store, dow
     ORDER BY store ASC, dow ASC
   `).all(fromPrefix, toPrefix) as {
     store: string; dow: number; days: number; totalSales: number; totalCustomers: number;

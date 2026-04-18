@@ -197,9 +197,29 @@ export async function GET() {
   // 曜日別平均売上（今週の予測に使用）
   const dowAvgForForecast: Record<number, number> = {}
   const dowAvgCustomersForForecast: Record<number, number> = {}
-  for (const d of dowAll) {
-    dowAvgForForecast[d.dow] = d.avgSales
-    dowAvgCustomersForForecast[d.dow] = d.avgCustomers
+
+  // 店舗別・曜日別平均売上（店舗絞込時の予測に使用）
+  const dowAvgByStoreForForecast: Record<string, Record<number, number>> = {}
+  const dowAvgCustomersByStoreForForecast: Record<string, Record<number, number>> = {}
+  for (const d of dowByStore) {
+    if (isClosedStore(d.store)) continue
+    if (!dowAvgByStoreForForecast[d.store]) dowAvgByStoreForForecast[d.store] = {}
+    if (!dowAvgCustomersByStoreForForecast[d.store]) dowAvgCustomersByStoreForForecast[d.store] = {}
+    dowAvgByStoreForForecast[d.store][d.dow] = d.avgSales
+    dowAvgCustomersByStoreForForecast[d.store][d.dow] = d.avgCustomers
+  }
+
+  // 全店合計の曜日別平均を、閉店店舗除外した店舗別平均の合計で再計算
+  const openStores = Object.keys(dowAvgByStoreForForecast)
+  for (let dow = 0; dow <= 6; dow++) {
+    let sumSales = 0
+    let sumCust = 0
+    for (const s of openStores) {
+      sumSales += dowAvgByStoreForForecast[s][dow] ?? 0
+      sumCust += dowAvgCustomersByStoreForForecast[s][dow] ?? 0
+    }
+    if (sumSales > 0) dowAvgForForecast[dow] = sumSales
+    if (sumCust > 0) dowAvgCustomersForForecast[dow] = sumCust
   }
 
   // 店舗別・曜日別平均売上（店舗絞込時の予測に使用）
