@@ -12,6 +12,7 @@ import {
 import { normalizeStaffName } from '@/lib/staffNormalize'
 import { isClosedStore, getStoreRevenueCap } from '@/lib/stores'
 import { computeForecast } from '@/lib/forecastEngine'
+import { ensureFreshScrape, CUTOFF_HOUR, CUTOFF_MINUTE } from '@/lib/autoScrape'
 import type { DailySales } from '@/lib/types'
 
 export const revalidate = 0
@@ -52,6 +53,8 @@ interface Projection {
 }
 
 export async function GET() {
+  await ensureFreshScrape()
+
   // 2024年8月〜当月
   const now = new Date(new Date().toLocaleString('en-US', { timeZone: 'Asia/Tokyo' }))
   const toYear = now.getFullYear()
@@ -60,7 +63,7 @@ export async function GET() {
   const hour = now.getHours()
   const minute = now.getMinutes()
   // 20:45締め: ダッシュボードと合わせて同じ today を使用
-  const today = (hour > 20 || (hour === 20 && minute >= 45)) ? calendarToday : calendarToday - 1
+  const today = (hour > CUTOFF_HOUR || (hour === CUTOFF_HOUR && minute >= CUTOFF_MINUTE)) ? calendarToday : calendarToday - 1
   const daysInCurrentMonth = new Date(toYear, toMonth, 0).getDate()
   const currentMonthKey = `${toYear}-${String(toMonth).padStart(2, '0')}`
 

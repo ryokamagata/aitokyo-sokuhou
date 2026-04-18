@@ -12,6 +12,7 @@ import {
 import { computeForecast } from '@/lib/forecastEngine'
 import { isClosedStore } from '@/lib/stores'
 import { normalizeStaffName } from '@/lib/staffNormalize'
+import { ensureFreshScrape, CUTOFF_HOUR, CUTOFF_MINUTE } from '@/lib/autoScrape'
 
 export const revalidate = 0
 
@@ -44,6 +45,8 @@ export async function GET(request: NextRequest) {
     rateLimit.set(clientId, { count: 1, resetAt: now + RATE_LIMIT_WINDOW })
   }
 
+  await ensureFreshScrape()
+
   // 3. 現在の年月日を取得（JST）
   const jstNow = new Date(new Date().toLocaleString('en-US', { timeZone: 'Asia/Tokyo' }))
   const year = jstNow.getFullYear()
@@ -51,7 +54,7 @@ export async function GET(request: NextRequest) {
   const calendarToday = jstNow.getDate()
   const hour = jstNow.getHours()
   const minute = jstNow.getMinutes()
-  const today = (hour > 20 || (hour === 20 && minute >= 45)) ? calendarToday : calendarToday - 1
+  const today = (hour > CUTOFF_HOUR || (hour === CUTOFF_HOUR && minute >= CUTOFF_MINUTE)) ? calendarToday : calendarToday - 1
   const daysInMonth = new Date(year, month, 0).getDate()
 
   // 4. DBから最新データを取得（既存のダッシュボードと同じ関数を使用）

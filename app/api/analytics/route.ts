@@ -8,10 +8,13 @@ import {
 } from '@/lib/db'
 import { STORES, MAX_REVENUE_PER_SEAT, isClosedStore } from '@/lib/stores'
 import { getHolidayMap } from '@/lib/holidays'
+import { ensureFreshScrape, CUTOFF_HOUR, CUTOFF_MINUTE } from '@/lib/autoScrape'
 
 export const revalidate = 0
 
 export async function GET() {
+  await ensureFreshScrape()
+
   const now = new Date(new Date().toLocaleString('en-US', { timeZone: 'Asia/Tokyo' }))
   const year = now.getFullYear()
   const month = now.getMonth() + 1
@@ -19,7 +22,7 @@ export async function GET() {
   const hour = now.getHours()
   const minute = now.getMinutes()
   // 20:45締め: ダッシュボードと統一
-  const today = (hour > 20 || (hour === 20 && minute >= 45)) ? calendarToday : calendarToday - 1
+  const today = (hour > CUTOFF_HOUR || (hour === CUTOFF_HOUR && minute >= CUTOFF_MINUTE)) ? calendarToday : calendarToday - 1
   const db = getDB()
 
   // ── 1. 顧客リピート分析 ──────────────────────────────────
