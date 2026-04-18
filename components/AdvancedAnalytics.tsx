@@ -714,12 +714,12 @@ function ForecastPanel({ data }: { data: AnalyticsData }) {
   return (
     <div className="space-y-4">
       <div className="bg-gray-800 rounded-xl p-3">
-        <p className="text-xs text-gray-400">過去の完了月について、Day10・15・20時点でのDOW（曜日別平均）予測と実績を比較。精度が高いほど予測モデルの信頼性が高い。</p>
+        <p className="text-xs text-gray-400">各月について、Day10・15・20時点でのDOW（曜日別平均）予測と実績を比較。精度が高いほど予測モデルの信頼性が高い。当月は現ペースの着地予測を「実績」扱い。</p>
       </div>
       {/* Monthly forecast accuracy table */}
       {months.length > 0 && (
         <div className="bg-gray-800 rounded-xl p-4 overflow-x-auto">
-          <h3 className="text-sm font-bold text-gray-200 mb-2">月別予測精度（2026年3月〜）</h3>
+          <h3 className="text-sm font-bold text-gray-200 mb-2">月別予測精度（{months[0].month}〜{months[months.length - 1].month}）</h3>
           <table className="w-full text-xs text-gray-300">
             <thead>
               <tr className="border-b border-gray-700 text-gray-400">
@@ -766,7 +766,6 @@ function ForecastPanel({ data }: { data: AnalyticsData }) {
 export default function AdvancedAnalytics() {
   const [data, setData] = useState<AnalyticsData | null>(null)
   const [loading, setLoading] = useState(true)
-  const [tab, setTab] = useState<Tab>('repeat')
 
   useEffect(() => {
     fetch('/api/analytics')
@@ -779,29 +778,31 @@ export default function AdvancedAnalytics() {
   if (!data) return <div className="text-red-400 text-sm text-center py-8">データ取得に失敗しました</div>
 
   return (
-    <div className="space-y-4">
-      {/* タブバー – 2行×3列 on mobile */}
-      <div className="grid grid-cols-3 gap-1 bg-gray-800 rounded-lg p-1">
-        {TABS.map(({ key, label }) => (
-          <button
-            key={key}
-            onClick={() => setTab(key)}
-            className={`text-xs sm:text-sm py-2 px-2 sm:px-4 rounded-md transition-colors font-medium ${
-              tab === key ? 'bg-blue-600 text-white' : 'text-gray-400 hover:text-gray-200'
-            }`}
-          >
-            {label}
-          </button>
-        ))}
-      </div>
-
-      {/* パネル */}
-      {tab === 'repeat' && <RepeatPanel data={data} />}
-      {tab === 'staff' && <StaffPanel data={data} />}
-      {tab === 'benchmark' && <BenchmarkPanel data={data} />}
-      {tab === 'seasonal' && <SeasonalPanel data={data} />}
-      {tab === 'abc' && <AbcPanel data={data} />}
-      {tab === 'forecast' && <ForecastPanel data={data} />}
+    <div className="space-y-8">
+      <section>
+        <h3 className="text-sm font-bold text-gray-200 mb-3 pb-2 border-b border-gray-700">顧客リピート</h3>
+        <RepeatPanel data={data} />
+      </section>
+      <section>
+        <h3 className="text-sm font-bold text-gray-200 mb-3 pb-2 border-b border-gray-700">スタッフ生産性</h3>
+        <StaffPanel data={data} />
+      </section>
+      <section>
+        <h3 className="text-sm font-bold text-gray-200 mb-3 pb-2 border-b border-gray-700">店舗ベンチマーク</h3>
+        <BenchmarkPanel data={data} />
+      </section>
+      <section>
+        <h3 className="text-sm font-bold text-gray-200 mb-3 pb-2 border-b border-gray-700">季節性分析</h3>
+        <SeasonalPanel data={data} />
+      </section>
+      <section>
+        <h3 className="text-sm font-bold text-gray-200 mb-3 pb-2 border-b border-gray-700">ABC分析</h3>
+        <AbcPanel data={data} />
+      </section>
+      <section>
+        <h3 className="text-sm font-bold text-gray-200 mb-3 pb-2 border-b border-gray-700">予測精度</h3>
+        <ForecastPanel data={data} />
+      </section>
     </div>
   )
 }

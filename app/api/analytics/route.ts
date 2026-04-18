@@ -15,6 +15,10 @@ export async function GET() {
   const now = new Date(new Date().toLocaleString('en-US', { timeZone: 'Asia/Tokyo' }))
   const year = now.getFullYear()
   const month = now.getMonth() + 1
+  const calendarToday = now.getDate()
+  const hour = now.getHours()
+  // 22時締め: ダッシュボードと統一
+  const today = hour >= 22 ? calendarToday : calendarToday - 1
   const db = getDB()
 
   // ── 1. 顧客リピート分析 ──────────────────────────────────
@@ -306,12 +310,14 @@ export async function GET() {
     forecasts: { day: number; forecast: number; accuracy: number }[]
   }[] = []
 
-  for (let i = 1; i <= 6; i++) {
+  // i=0: 当月(進行中), i=1..6: 過去月
+  for (let i = 0; i <= 6; i++) {
     const tgtDate = new Date(year, month - 1 - i, 1)
     const tgtYear = tgtDate.getFullYear()
     const tgtMonth = tgtDate.getMonth() + 1
     const daysInMonth = new Date(tgtYear, tgtMonth, 0).getDate()
     const tgtPrefix = `${tgtYear}-${String(tgtMonth).padStart(2, '0')}`
+    const isCurrentMonth = i === 0
 
     const monthDailySales = db.prepare(`
       SELECT date, SUM(sales) as sales
@@ -322,12 +328,24 @@ export async function GET() {
 
     if (monthDailySales.length === 0) continue
 
-    const actualTotal = monthDailySales.reduce((s, d) => s + d.sales, 0)
+    const rawActualTotal = monthDailySales.reduce((s, d) => s + d.sales, 0)
+
+    // 当月は「現時点の着地予測(ペース)」を実績扱いにする。完了月は実績そのもの
+    let actualTotal: number
+    if (isCurrentMonth && today > 0 && today < daysInMonth) {
+      const daysWithData = monthDailySales.filter(d => d.sales > 0).length || 1
+      actualTotal = Math.round((rawActualTotal / daysWithData) * daysInMonth)
+    } else {
+      actualTotal = rawActualTotal
+    }
 
     // 曜日別平均を計算（その月のデータから）
     const forecasts: { day: number; forecast: number; accuracy: number }[] = []
     for (const checkpoint of [10, 15, 20]) {
       if (checkpoint > daysInMonth) continue
+      // 当月は未到達のチェックポイントはスキップ
+      if (isCurrentMonth && checkpoint > today) continue
+
       const salesUpToDay = monthDailySales.filter(d => {
         const dayNum = parseInt(d.date.split('-')[2])
         return dayNum <= checkpoint
@@ -361,12 +379,17 @@ export async function GET() {
       forecasts.push({ day: checkpoint, forecast: forecastTotal, accuracy })
     }
 
+    if (forecasts.length === 0 && !isCurrentMonth) continue
+
     forecastAccuracyMonths.push({
       month: tgtPrefix,
       actual: actualTotal,
       forecasts,
     })
   }
+
+  // 時系列順に並べ替え（古い順）
+  forecastAccuracyMonths.sort((a, b) => a.month.localeCompare(b.month))
 
   // 曜日別予測精度
   const dowAccuracy: { dow: number; label: string; avgError: number }[] = []

@@ -202,6 +202,17 @@ export async function GET() {
     dowAvgCustomersForForecast[d.dow] = d.avgCustomers
   }
 
+  // 店舗別・曜日別平均売上（店舗絞込時の予測に使用）
+  const dowAvgByStoreForForecast: Record<string, Record<number, number>> = {}
+  const dowAvgCustomersByStoreForForecast: Record<string, Record<number, number>> = {}
+  for (const d of dowByStore) {
+    if (isClosedStore(d.store)) continue
+    if (!dowAvgByStoreForForecast[d.store]) dowAvgByStoreForForecast[d.store] = {}
+    if (!dowAvgCustomersByStoreForForecast[d.store]) dowAvgCustomersByStoreForForecast[d.store] = {}
+    dowAvgByStoreForForecast[d.store][d.dow] = d.avgSales
+    dowAvgCustomersByStoreForForecast[d.store][d.dow] = d.avgCustomers
+  }
+
   const buildWeekDays = (rows: typeof allDailySales, mondayDate: Date) => {
     const days: {
       date: string; dow: number; dowLabel: string; sales: number; customers: number
@@ -268,6 +279,8 @@ export async function GET() {
       storeData: buildStoreWeekDays(allStoreDailySales, prevMonthWeekFrom, prevMonthWeekTo),
     },
     holidayMap,
+    dowAvgByStore: dowAvgByStoreForForecast,
+    dowAvgCustomersByStore: dowAvgCustomersByStoreForForecast,
   }
 
   // ── 目標サジェスト ──────────────────────────────────────────────────

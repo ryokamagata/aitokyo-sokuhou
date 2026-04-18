@@ -74,6 +74,8 @@ type WeeklyData = {
   lastWeek: WeekData
   prevMonthWeek: WeekData
   holidayMap: Record<string, string>
+  dowAvgByStore?: Record<string, Record<number, number>>
+  dowAvgCustomersByStore?: Record<string, Record<number, number>>
 }
 
 type AnalysisData = {
@@ -116,7 +118,6 @@ function shortenStoreName(name: string): string {
 export default function AnalysisView() {
   const [data, setData] = useState<AnalysisData | null>(null)
   const [loading, setLoading] = useState(true)
-  const [subTab, setSubTab] = useState<SubTab>('decomposition')
   const [selectedStore, setSelectedStore] = useState<string>('all')
 
   useEffect(() => {
@@ -130,39 +131,23 @@ export default function AnalysisView() {
   if (!data) return <div className="text-red-400 text-sm text-center py-8">データ取得に失敗しました</div>
 
   return (
-    <div className="space-y-4">
-      {/* サブタブ */}
-      <div className="flex gap-1 bg-gray-800 rounded-lg p-1">
-        {([
-          ['decomposition', '客単価×客数'],
-          ['dow', '曜日別パターン'],
-          ['target', '目標サジェスト'],
-          ['advanced', '詳細分析'],
-        ] as [SubTab, string][]).map(([key, label]) => (
-          <button
-            key={key}
-            onClick={() => setSubTab(key)}
-            className={`flex-1 text-xs sm:text-sm py-2 px-2 sm:px-4 rounded-md transition-colors font-medium ${
-              subTab === key ? 'bg-blue-600 text-white' : 'text-gray-400 hover:text-gray-200'
-            }`}
-          >
-            {label}
-          </button>
-        ))}
-      </div>
-
-      {subTab === 'decomposition' && (
+    <div className="space-y-8">
+      <section>
+        <h2 className="text-sm font-bold text-gray-200 mb-3 pb-2 border-b border-gray-700">客単価×客数 分解</h2>
         <DecompositionPanel data={data} selectedStore={selectedStore} onStoreChange={setSelectedStore} />
-      )}
-      {subTab === 'dow' && (
+      </section>
+      <section>
+        <h2 className="text-sm font-bold text-gray-200 mb-3 pb-2 border-b border-gray-700">曜日別パターン</h2>
         <DowPanel data={data} selectedStore={selectedStore} onStoreChange={setSelectedStore} />
-      )}
-      {subTab === 'target' && (
+      </section>
+      <section>
+        <h2 className="text-sm font-bold text-gray-200 mb-3 pb-2 border-b border-gray-700">目標サジェスト</h2>
         <TargetSuggestPanel data={data} />
-      )}
-      {subTab === 'advanced' && (
+      </section>
+      <section>
+        <h2 className="text-sm font-bold text-gray-200 mb-3 pb-2 border-b border-gray-700">詳細分析</h2>
         <AdvancedAnalytics />
-      )}
+      </section>
     </div>
   )
 }
@@ -310,14 +295,18 @@ function DowPanel({
   const DOW_COLORS = ['text-red-400', 'text-gray-300', 'text-gray-300', 'text-gray-300', 'text-gray-300', 'text-gray-300', 'text-blue-400']
   const DOW_BG = ['bg-red-500/70', 'bg-gray-500/70', 'bg-gray-500/70', 'bg-gray-500/70', 'bg-gray-500/70', 'bg-gray-500/70', 'bg-blue-500/70']
 
-  // 店舗別のときは日別データを店舗でフィルタ
+  // 店舗別のときは日別データを店舗でフィルタ。予測値も店舗別の曜日平均を使う
   const getWeekDays = (week: WeekData): WeekDay[] => {
     if (selectedStore === 'all') return week.days
     const storeMap = week.storeData[selectedStore] ?? {}
+    const storeDowAvg = weekly.dowAvgByStore?.[selectedStore] ?? {}
+    const storeDowCustAvg = weekly.dowAvgCustomersByStore?.[selectedStore] ?? {}
     return week.days.map(d => ({
       ...d,
       sales: storeMap[d.date]?.sales ?? 0,
       customers: storeMap[d.date]?.customers ?? 0,
+      forecast: storeDowAvg[d.dow] ?? 0,
+      forecastCustomers: storeDowCustAvg[d.dow] ?? 0,
     }))
   }
 
