@@ -5,6 +5,8 @@ node_modules/
 
 # DB（ローカル開発用）
 data/*.db
+data/*.db-shm
+data/*.db-wal
 
 # 環境変数
 .env

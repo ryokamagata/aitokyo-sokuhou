@@ -1,5 +1,5 @@
 import { NextResponse } from 'next/server'
-import { getScrapedDailySales, getTarget, getRecentCostActuals, savePLSnapshot } from '@/lib/db'
+import { getScrapedDailySales, getTarget, getRecentCostActuals, savePLSnapshot, getCostAccounts } from '@/lib/db'
 import { computeForecast } from '@/lib/forecastEngine'
 import { computePLForecast, buildActualPL } from '@/lib/plEngine'
 import { CUTOFF_HOUR, CUTOFF_MINUTE } from '@/lib/autoScrape'
@@ -58,17 +58,20 @@ export async function GET(req: Request) {
     ? buildActualPL(year, month)
     : computePLForecast({ year, month, todayIsoDate, revenue: revenueHint, salesConfidence })
 
-  // 過去6ヶ月分の確定PL推移（実績あり月のみ）
+  // 過去6ヶ月分の確定PL推移（cogs + sga のみ、non_op は除外）
   const trendStart = normalizeYM(year, month - 6)
   const trendActuals = getRecentCostActuals(trendStart.year, trendStart.month, year, month)
+  const accounts = getCostAccounts()
+  const categoryByCode = new Map(accounts.map(a => [a.code, a.category]))
   const trendByMonth = new Map<string, { revenue: number; cost: number }>()
   for (const a of trendActuals) {
     if (a.store !== null) continue
+    const cat = categoryByCode.get(a.account_code)
     const key = `${a.year}-${pad(a.month)}`
     if (!trendByMonth.has(key)) trendByMonth.set(key, { revenue: 0, cost: 0 })
     const bucket = trendByMonth.get(key)!
-    if (a.account_code === 'revenue') bucket.revenue += a.amount
-    else bucket.cost += a.amount
+    if (cat === 'revenue') bucket.revenue += a.amount
+    else if (cat === 'cogs' || cat === 'sga') bucket.cost += a.amount
   }
   const trend = [...trendByMonth.entries()]
     .map(([ym, v]) => {
@@ -86,8 +89,9 @@ export async function GET(req: Request) {
     savePLSnapshot({
       year, month, stage: forecast.stage,
       revenue: forecast.revenue, cogs: forecast.cogs,
-      personnel: forecast.personnel, rent: forecast.rent,
-      other_sga: forecast.otherSga + forecast.promo + forecast.utility,
+      personnel: forecast.cogsPersonnel + forecast.sgaPersonnel,
+      rent: forecast.sgaRent,
+      other_sga: forecast.sga - forecast.sgaRent - forecast.sgaPersonnel,
       operating_profit: forecast.operatingProfit,
       op_margin: forecast.opMargin,
     })
