@@ -12,10 +12,11 @@ import ScrapeButton from '@/components/ScrapeButton'
 import HistoryView from '@/components/HistoryView'
 import AnalysisView from '@/components/AnalysisView'
 import KpiView from '@/components/KpiView'
+import PLForecastView from '@/components/PLForecastView'
 import ColumnPanel from '@/components/ColumnPanel'
 import type { DashboardData } from '@/lib/types'
 
-type MainTab = 'current' | 'history' | 'analysis' | 'kpi'
+type MainTab = 'current' | 'history' | 'analysis' | 'kpi' | 'pl'
 
 const CONFIDENCE_LABEL = { high: '高', medium: '中', low: '低' } as const
 
@@ -107,12 +108,13 @@ export default function DashboardClient() {
       </div>
 
       {/* メインタブ切替 */}
-      <div className="flex gap-1 bg-gray-800 rounded-xl p-1.5">
+      <div className="flex gap-1 bg-gray-800 rounded-xl p-1.5 overflow-x-auto">
         {([
           ['current', '今月', '今月ダッシュボード'],
           ['history', '実績', '過去実績'],
           ['analysis', '分析', '分析'],
           ['kpi', 'KPI', 'KPI'],
+          ['pl', 'PL', '予測PL'],
         ] as [MainTab, string, string][]).map(([key, mobileLabel, desktopLabel]) => (
           <button
             key={key}
@@ -137,6 +139,9 @@ export default function DashboardClient() {
 
       {/* KPIタブ */}
       {mainTab === 'kpi' && <KpiView />}
+
+      {/* 予測PLタブ */}
+      {mainTab === 'pl' && <PLForecastView />}
 
       {/* 今月ダッシュボード */}
       {mainTab === 'current' && <>
