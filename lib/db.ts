@@ -177,7 +177,140 @@ function runMigrations(db: Database.Database) {
       updated_at TEXT NOT NULL DEFAULT (datetime('now')),
       UNIQUE(year, month, kpi_key)
     );
+
+    -- ─── 予測PL: 科目マスタ / 確定PL / 固定費・変動費率 / 予測履歴 ─────────────
+    CREATE TABLE IF NOT EXISTS cost_accounts (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      code TEXT UNIQUE NOT NULL,
+      category TEXT NOT NULL,
+      subcategory TEXT,
+      parent_code TEXT,
+      name TEXT NOT NULL,
+      pl_order INTEGER NOT NULL,
+      is_variable INTEGER NOT NULL DEFAULT 0,
+      business_unit TEXT NOT NULL DEFAULT 'salon'
+    );
+
+    CREATE TABLE IF NOT EXISTS cost_actuals_monthly (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      year INTEGER NOT NULL,
+      month INTEGER NOT NULL,
+      account_code TEXT NOT NULL,
+      store TEXT NOT NULL DEFAULT '',
+      amount INTEGER NOT NULL,
+      source TEXT NOT NULL DEFAULT 'manual',
+      confirmed_at TEXT,
+      imported_at TEXT NOT NULL DEFAULT (datetime('now')),
+      UNIQUE(year, month, account_code, store)
+    );
+    CREATE INDEX IF NOT EXISTS idx_cam_ym ON cost_actuals_monthly(year, month);
+
+    CREATE TABLE IF NOT EXISTS cost_fixed_monthly (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      account_code TEXT NOT NULL,
+      store TEXT,
+      valid_from TEXT NOT NULL,
+      valid_to TEXT,
+      amount INTEGER NOT NULL,
+      note TEXT
+    );
+
+    CREATE TABLE IF NOT EXISTS cost_variable_rates (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      account_code TEXT NOT NULL,
+      store TEXT,
+      driver TEXT NOT NULL DEFAULT 'revenue',
+      rate REAL NOT NULL,
+      valid_from TEXT NOT NULL,
+      valid_to TEXT
+    );
+
+    CREATE TABLE IF NOT EXISTS pl_forecast_snapshots (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      year INTEGER NOT NULL,
+      month INTEGER NOT NULL,
+      snapshot_date TEXT NOT NULL,
+      stage TEXT NOT NULL,
+      revenue INTEGER NOT NULL DEFAULT 0,
+      cogs INTEGER NOT NULL DEFAULT 0,
+      personnel INTEGER NOT NULL DEFAULT 0,
+      rent INTEGER NOT NULL DEFAULT 0,
+      other_sga INTEGER NOT NULL DEFAULT 0,
+      operating_profit INTEGER NOT NULL DEFAULT 0,
+      op_margin REAL NOT NULL DEFAULT 0,
+      payload_json TEXT
+    );
+    CREATE INDEX IF NOT EXISTS idx_pls_ym ON pl_forecast_snapshots(year, month);
   `)
+
+  // `subcategory` カラムが無い古いスキーマなら追加
+  const caCols = db.prepare("PRAGMA table_info(cost_accounts)").all() as { name: string }[]
+  if (!caCols.some(c => c.name === 'subcategory')) {
+    db.exec('ALTER TABLE cost_accounts ADD COLUMN subcategory TEXT')
+  }
+
+  // 科目マスタをAI TOKYO 実シート構造に合わせてシード
+  // v1 の汎用20科目しか無い場合は削除して入れ替え
+  const hasNewCode = (db.prepare("SELECT COUNT(*) as cnt FROM cost_accounts WHERE code = 'cogs_salon_salary'").get() as { cnt: number }).cnt > 0
+  if (!hasNewCode) {
+    db.exec('DELETE FROM cost_accounts')
+    // code, category, subcategory, name, pl_order, is_variable
+    const seedAccounts: [string, string, string, string, number, number][] = [
+      // 売上
+      ['revenue',                'revenue', 'revenue',   '売上高',                       10, 0],
+      // 売上原価 (人件費含む日本の美容室標準)
+      ['cogs_purchase',          'cogs',    'material',  '仕入高',                       20, 1],
+      ['cogs_drugs',             'cogs',    'material',  '【原】材料費',                 21, 1],
+      ['cogs_supplies_shop',     'cogs',    'material',  '【原】消耗品費',               22, 1],
+      ['cogs_comm_shop',         'cogs',    'material',  '【原】通信費',                 23, 0],
+      ['cogs_lease_shop',        'cogs',    'material',  '【原】賃借料',                 24, 0],
+      ['cogs_utility_shop',      'cogs',    'material',  '【原】水道光熱費',             25, 0],
+      ['cogs_fee_employee',      'cogs',    'material',  '【原】支払手数料',             26, 0],
+      ['cogs_promo_recruit',     'cogs',    'promo',     '【原】広告宣伝費(採用)',       27, 0],
+      ['cogs_commute',           'cogs',    'personnel', '【原】旅費交通費(通勤手当)',   30, 0],
+      ['cogs_salon_salary',      'cogs',    'personnel', '【原】給与手当(サロン社員)',   31, 0],
+      ['cogs_social',            'cogs',    'personnel', '【原】法定福利費',             32, 0],
+      ['cogs_professional',      'cogs',    'personnel', '【原】支払報酬料(プロ契約)',   33, 1],
+      // 販管費
+      ['sga_executive',          'sga',     'personnel', '役員報酬',                     40, 0],
+      ['sga_salary',             'sga',     'personnel', '給料賃金',                     41, 0],
+      ['sga_welfare',            'sga',     'personnel', '福利厚生費',                   42, 0],
+      ['sga_outsource_spot',     'sga',     'other',     '業務委託料',                   43, 0],
+      ['sga_shipping',           'sga',     'other',     '荷造運賃',                     44, 0],
+      ['sga_promo',              'sga',     'promo',     '広告宣伝費',                   45, 0],
+      ['sga_entertainment',      'sga',     'other',     '接待交際費',                   46, 0],
+      ['sga_travel',             'sga',     'other',     '旅費交通費',                   47, 0],
+      ['sga_comm',               'sga',     'other',     '通信費',                       48, 0],
+      ['sga_utility',            'sga',     'utility',   '水道光熱費',                   49, 0],
+      ['sga_repair',             'sga',     'other',     '修繕費',                       50, 0],
+      ['sga_supplies',           'sga',     'other',     '備品・消耗品費',               51, 0],
+      ['sga_lease',              'sga',     'rent',      'リース料',                     52, 0],
+      ['sga_rent',               'sga',     'rent',      '地代家賃',                     53, 0],
+      ['sga_insurance',          'sga',     'other',     '保険料',                       54, 0],
+      ['sga_tax',                'sga',     'other',     '租税公課',                     55, 0],
+      ['sga_banking',            'sga',     'other',     '支払手数料',                   56, 1],
+      ['sga_legal',              'sga',     'other',     '支払報酬(弁護士)',             57, 0],
+      ['sga_meeting',            'sga',     'other',     '会議費',                       58, 0],
+      ['sga_books',              'sga',     'other',     '新聞図書費',                   59, 0],
+      ['sga_misc',               'sga',     'other',     '雑費',                         60, 0],
+      ['sga_outsource',          'sga',     'other',     '外注費',                       61, 0],
+      ['sga_membership',         'sga',     'other',     '諸会費',                       62, 0],
+      ['sga_training_rent',      'sga',     'other',     '賃借料(研修)',                 63, 0],
+      ['sga_judicial',           'sga',     'other',     '支払報酬料(司法書士)',         64, 0],
+      ['sga_training_exp',       'sga',     'other',     '研修費',                       65, 0],
+      // 営業外
+      ['non_op_interest_income', 'non_op',  'income',    '受取利息',                     90, 0],
+      ['non_op_misc_income',     'non_op',  'income',    '雑収入',                       91, 0],
+      ['non_op_interest_expense','non_op',  'expense',   '支払利息',                     92, 0],
+      ['non_op_tax',             'non_op',  'expense',   '法人税等',                     99, 0],
+    ]
+    const ins = db.prepare(
+      'INSERT INTO cost_accounts(code, category, subcategory, name, pl_order, is_variable) VALUES(?,?,?,?,?,?)'
+    )
+    db.transaction(() => {
+      for (const row of seedAccounts) ins.run(...row)
+    })()
+  }
 
   // 2026年 月別売上目標のシード（既存データがなければ挿入）
   const targetCount = (db.prepare(
@@ -887,4 +1020,172 @@ export function importCSVRows(rows: BMRow[], fileHash: string, filename: string)
     count
   )
   return count
+}
+
+// ─── 予測PL: 科目 / 実績 / 固定費 / 変動費率 ─────────────────────────────────
+
+export type CostAccount = {
+  code: string
+  category: string
+  subcategory: string | null
+  parent_code: string | null
+  name: string
+  pl_order: number
+  is_variable: number
+  business_unit: string
+}
+
+export function getCostAccounts(): CostAccount[] {
+  const db = getDB()
+  return db.prepare(
+    'SELECT code, category, subcategory, parent_code, name, pl_order, is_variable, business_unit FROM cost_accounts ORDER BY pl_order ASC'
+  ).all() as CostAccount[]
+}
+
+export type CostActual = {
+  year: number
+  month: number
+  account_code: string
+  store: string | null
+  amount: number
+  source: string
+  confirmed_at: string | null
+}
+
+export function upsertCostActual(
+  year: number, month: number, accountCode: string, store: string | null,
+  amount: number, source: string, confirmedAt: string | null
+) {
+  const db = getDB()
+  const storeKey = store ?? ''
+  db.prepare(`
+    INSERT INTO cost_actuals_monthly(year, month, account_code, store, amount, source, confirmed_at)
+    VALUES(?, ?, ?, ?, ?, ?, ?)
+    ON CONFLICT(year, month, account_code, store) DO UPDATE SET
+      amount=excluded.amount, source=excluded.source,
+      confirmed_at=excluded.confirmed_at, imported_at=datetime('now')
+  `).run(year, month, accountCode, storeKey, amount, source, confirmedAt)
+}
+
+function normalizeStoreField<T extends { store: string | null }>(rows: T[]): T[] {
+  for (const r of rows) if (r.store === '') r.store = null
+  return rows
+}
+
+export function getCostActuals(year: number, month: number): CostActual[] {
+  const db = getDB()
+  const rows = db.prepare(
+    'SELECT year, month, account_code, store, amount, source, confirmed_at FROM cost_actuals_monthly WHERE year=? AND month=?'
+  ).all(year, month) as CostActual[]
+  return normalizeStoreField(rows)
+}
+
+/** 過去N ヶ月の確定実績を month 昇順で返す */
+export function getRecentCostActuals(fromYear: number, fromMonth: number, toYear: number, toMonth: number): CostActual[] {
+  const db = getDB()
+  const rows = db.prepare(`
+    SELECT year, month, account_code, store, amount, source, confirmed_at
+    FROM cost_actuals_monthly
+    WHERE (year * 100 + month) >= ? AND (year * 100 + month) <= ?
+    ORDER BY year ASC, month ASC
+  `).all(fromYear * 100 + fromMonth, toYear * 100 + toMonth) as CostActual[]
+  return normalizeStoreField(rows)
+}
+
+export type FixedCost = {
+  account_code: string
+  store: string | null
+  valid_from: string
+  valid_to: string | null
+  amount: number
+  note: string | null
+}
+
+export function getFixedCosts(year: number, month: number): FixedCost[] {
+  const db = getDB()
+  const ym = `${year}-${String(month).padStart(2, '0')}`
+  const rows = db.prepare(`
+    SELECT account_code, store, valid_from, valid_to, amount, note
+    FROM cost_fixed_monthly
+    WHERE valid_from <= ? AND (valid_to IS NULL OR valid_to >= ?)
+  `).all(ym, ym) as FixedCost[]
+  return normalizeStoreField(rows)
+}
+
+export function upsertFixedCost(
+  accountCode: string, store: string | null, validFrom: string,
+  validTo: string | null, amount: number, note: string | null
+) {
+  const db = getDB()
+  const storeKey = store ?? ''
+  const existing = db.prepare(
+    'SELECT id FROM cost_fixed_monthly WHERE account_code=? AND COALESCE(store, \'\')=? AND valid_from=?'
+  ).get(accountCode, storeKey, validFrom) as { id: number } | undefined
+  if (existing) {
+    db.prepare(
+      'UPDATE cost_fixed_monthly SET valid_to=?, amount=?, note=? WHERE id=?'
+    ).run(validTo, amount, note, existing.id)
+  } else {
+    db.prepare(
+      'INSERT INTO cost_fixed_monthly(account_code, store, valid_from, valid_to, amount, note) VALUES(?,?,?,?,?,?)'
+    ).run(accountCode, storeKey, validFrom, validTo, amount, note)
+  }
+}
+
+export type VariableRate = {
+  account_code: string
+  store: string | null
+  driver: string
+  rate: number
+  valid_from: string
+  valid_to: string | null
+}
+
+export function getVariableRates(year: number, month: number): VariableRate[] {
+  const db = getDB()
+  const ym = `${year}-${String(month).padStart(2, '0')}`
+  const rows = db.prepare(`
+    SELECT account_code, store, driver, rate, valid_from, valid_to
+    FROM cost_variable_rates
+    WHERE valid_from <= ? AND (valid_to IS NULL OR valid_to >= ?)
+  `).all(ym, ym) as VariableRate[]
+  return normalizeStoreField(rows)
+}
+
+export function upsertVariableRate(
+  accountCode: string, store: string | null, driver: string,
+  rate: number, validFrom: string, validTo: string | null
+) {
+  const db = getDB()
+  const storeKey = store ?? ''
+  const existing = db.prepare(
+    'SELECT id FROM cost_variable_rates WHERE account_code=? AND COALESCE(store, \'\')=? AND valid_from=?'
+  ).get(accountCode, storeKey, validFrom) as { id: number } | undefined
+  if (existing) {
+    db.prepare(
+      'UPDATE cost_variable_rates SET driver=?, rate=?, valid_to=? WHERE id=?'
+    ).run(driver, rate, validTo, existing.id)
+  } else {
+    db.prepare(
+      'INSERT INTO cost_variable_rates(account_code, store, driver, rate, valid_from, valid_to) VALUES(?,?,?,?,?,?)'
+    ).run(accountCode, storeKey, driver, rate, validFrom, validTo)
+  }
+}
+
+export function savePLSnapshot(s: {
+  year: number; month: number; stage: string;
+  revenue: number; cogs: number; personnel: number; rent: number;
+  other_sga: number; operating_profit: number; op_margin: number;
+  payload_json?: string
+}) {
+  const db = getDB()
+  const snapshotDate = new Date().toISOString().slice(0, 10)
+  db.prepare(`
+    INSERT INTO pl_forecast_snapshots(year, month, snapshot_date, stage, revenue, cogs, personnel, rent, other_sga, operating_profit, op_margin, payload_json)
+    VALUES(?,?,?,?,?,?,?,?,?,?,?,?)
+  `).run(
+    s.year, s.month, snapshotDate, s.stage,
+    s.revenue, s.cogs, s.personnel, s.rent, s.other_sga,
+    s.operating_profit, s.op_margin, s.payload_json ?? null
+  )
 }
