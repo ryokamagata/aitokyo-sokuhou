@@ -15,7 +15,7 @@ import {
   getStoreOpeningRevenue,
 } from '@/lib/db'
 import { STORES, MAX_REVENUE_PER_SEAT, isClosedStore } from '@/lib/stores'
-import { getHolidayMap } from '@/lib/holidays'
+import { getHolidayMap, isRegularHoliday } from '@/lib/holidays'
 
 export const revalidate = 0
 
@@ -271,7 +271,7 @@ export async function GET() {
     const days: {
       date: string; dow: number; dowLabel: string; sales: number; customers: number
       holiday: string | null; forecast: number; forecastCustomers: number
-      isFuture: boolean; isToday: boolean
+      isFuture: boolean; isToday: boolean; isClosed: boolean
     }[] = []
     for (let i = 0; i < 7; i++) {
       const d = new Date(mondayDate)
@@ -282,6 +282,11 @@ export async function GET() {
       const dowLabels = ['日', '月', '火', '水', '木', '金', '土']
       const isFuture = dateStr > todayStr
       const isToday = dateStr === todayStr
+      const isClosed = isRegularHoliday(dateStr)
+      // 定休日（東京: 繁忙期外の第2/第4月曜）は予測値を 0 にする
+      // 過去実績（売上が立っている日）は sales/customers にそのまま表示
+      const baseForecast = dowAvgForForecast[dow] ?? 0
+      const baseForecastCustomers = dowAvgCustomersForForecast[dow] ?? 0
       days.push({
         date: dateStr,
         dow,
@@ -289,10 +294,11 @@ export async function GET() {
         sales: dayData?.sales ?? 0,
         customers: dayData?.customers ?? 0,
         holiday: holidayMap[dateStr] ?? null,
-        forecast: dowAvgForForecast[dow] ?? 0,
-        forecastCustomers: dowAvgCustomersForForecast[dow] ?? 0,
+        forecast: isClosed ? 0 : baseForecast,
+        forecastCustomers: isClosed ? 0 : baseForecastCustomers,
         isFuture,
         isToday,
+        isClosed,
       })
     }
     return days

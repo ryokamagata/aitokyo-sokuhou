@@ -25,13 +25,14 @@ export type ForecastResult = {
   projectedTotal: number     // 残り日数の予測合計
   forecastTotal: number      // 実績 + 予測
   confidence: 'high' | 'medium' | 'low'
-  dailyProjections: { date: string; projected: number }[]
+  dailyProjections: { date: string; projected: number; closed?: boolean }[]
   weekdayAverage: number     // 平日1日あたり平均売上
   weekendAverage: number     // 土日祝1日あたり平均売上
-  weekdayCount: number       // 月内の平日日数（祝日除く）
-  weekendCount: number       // 月内の土日祝日数
+  weekdayCount: number       // 月内の平日日数（祝日除く・定休日除く）
+  weekendCount: number       // 月内の土日祝日数（定休日に当たる場合は除く）
   weekdayActualDays: number  // 実績計上済みの平日日数
   weekendActualDays: number  // 実績計上済みの土日祝日数
+  regularHolidayCount: number // 月内の定休日（東京: 第2/第4月曜、繁忙期外）
 }
 
 // 着地予測の詳細（3パターン + 根拠）

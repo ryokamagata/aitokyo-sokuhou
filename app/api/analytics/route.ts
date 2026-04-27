@@ -7,7 +7,7 @@ import {
   getDayOfWeekSales,
 } from '@/lib/db'
 import { STORES, MAX_REVENUE_PER_SEAT, isClosedStore } from '@/lib/stores'
-import { getHolidayMap } from '@/lib/holidays'
+import { getHolidayMap, isRegularHoliday } from '@/lib/holidays'
 import { CUTOFF_HOUR, CUTOFF_MINUTE } from '@/lib/autoScrape'
 
 export const dynamic = 'force-dynamic'
@@ -369,9 +369,12 @@ export async function GET() {
         dowAvg[dow] = vals.length > 0 ? Math.round(vals.reduce((s, v) => s + v, 0) / vals.length) : 0
       }
 
-      // Project remaining days
+      // Project remaining days（定休日はスキップ）
       let projected = 0
+      const padTgt = (n: number) => String(n).padStart(2, '0')
       for (let d = checkpoint + 1; d <= daysInMonth; d++) {
+        const dateStr = `${tgtYear}-${padTgt(tgtMonth)}-${padTgt(d)}`
+        if (isRegularHoliday(dateStr)) continue
         const futureDate = new Date(tgtYear, tgtMonth - 1, d)
         projected += dowAvg[futureDate.getDay()] ?? 0
       }

@@ -1,5 +1,5 @@
 import type { DailySales, ForecastResult } from './types'
-import { getHolidayMap } from './holidays'
+import { getHolidayMap, isRegularHoliday } from './holidays'
 
 export function computeForecast(
   dailySales: DailySales[],
@@ -17,6 +17,8 @@ export function computeForecast(
     dow === 0 || dow === 6 || holidays[dateStr] !== undefined
 
   // Step 1: 平日 / 土日祝 に分類して実績を集計（ゼロ売上の日は除外）
+  // 定休日であっても売上が立っていれば実績は普通に集計する
+  // （アシスタント練習等で売上が発生する日があるため、母数には含める）
   const weekdayAmounts: number[] = []
   const weekendAmounts: number[] = []
   for (const day of dailySales) {
@@ -35,11 +37,17 @@ export function computeForecast(
   const weekdayAverage = avg(weekdayAmounts)
   const weekendAverage = avg(weekendAmounts)
 
-  // Step 2: 月内の平日/土日祝の総日数
+  // Step 2: 月内の平日/土日祝/定休日の総日数
+  // 定休日は予測加算しないため、weekday/weekend どちらにもカウントしない
   let weekdayCount = 0
   let weekendCount = 0
+  let regularHolidayCount = 0
   for (let d = 1; d <= daysInMonth; d++) {
     const dateStr = `${year}-${pad(month)}-${pad(d)}`
+    if (isRegularHoliday(dateStr)) {
+      regularHolidayCount++
+      continue
+    }
     const dow = new Date(year, month - 1, d).getDay()
     if (isWeekendOrHoliday(dateStr, dow)) weekendCount++
     else weekdayCount++
@@ -62,6 +70,7 @@ export function computeForecast(
       weekendCount,
       weekdayActualDays: 0,
       weekendActualDays: 0,
+      regularHolidayCount,
     }
   }
 
@@ -70,16 +79,21 @@ export function computeForecast(
   const effectiveWeekendAvg = weekendAverage > 0 ? weekendAverage : weekdayAverage
 
   // Step 4: 実績に無い日を平日/土日祝の平均で予測
-  // today が DB にまだ無くても projection に含まれるので、締日直後のスクレイプで
-  // 実績に繰り上がった瞬間に forecastTotal がズレずに差分だけ反映される。
+  // 未来の定休日（東京: 繁忙期外の第2/第4月曜）は projected = 0 とする。
+  // 定休日に売上が立っている実績は actualTotal にそのまま乗っているので
+  // 「実績は実績、未来は閉店扱い」で整合する。
   const actualTotal = dailySales.reduce((s, d) => s + d.totalAmount, 0)
   const actualDateSet = new Set(dailySales.map((d) => d.date))
-  const dailyProjections: { date: string; projected: number }[] = []
+  const dailyProjections: { date: string; projected: number; closed?: boolean }[] = []
   let projectedTotal = 0
 
   for (let d = 1; d <= daysInMonth; d++) {
     const dateStr = `${year}-${pad(month)}-${pad(d)}`
     if (actualDateSet.has(dateStr)) continue
+    if (isRegularHoliday(dateStr)) {
+      dailyProjections.push({ date: dateStr, projected: 0, closed: true })
+      continue
+    }
     const dow = new Date(year, month - 1, d).getDay()
     const projected = isWeekendOrHoliday(dateStr, dow)
       ? effectiveWeekendAvg
@@ -108,5 +122,6 @@ export function computeForecast(
     weekendCount,
     weekdayActualDays,
     weekendActualDays,
+    regularHolidayCount,
   }
 }

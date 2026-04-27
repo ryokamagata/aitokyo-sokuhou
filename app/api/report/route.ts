@@ -10,6 +10,7 @@ import {
 } from '@/lib/db'
 import { STORES, MAX_REVENUE_PER_SEAT, isClosedStore, getStoreRevenueCap } from '@/lib/stores'
 import { normalizeStaffName } from '@/lib/staffNormalize'
+import { isRegularHoliday } from '@/lib/holidays'
 
 export const revalidate = 0
 
@@ -30,6 +31,26 @@ export async function GET() {
   const today = now.getDate()
   const daysInMonth = new Date(year, month, 0).getDate()
   const remaining = daysInMonth - today
+
+  // ── 営業日カウント（定休日は分母から除外） ──────────────
+  // 定休日に売上が立っていても（アシスタント練習等）、currentSales には実績として
+  // 普通に乗る。日割り母数（営業日数）にだけ含めないことで、
+  // ペース予測が不当に下がらないようにする。
+  const padDay = (n: number) => String(n).padStart(2, '0')
+  let businessDaysElapsed = 0
+  let businessDaysRemaining = 0
+  let totalBusinessDays = 0
+  let regularHolidayCount = 0
+  for (let d = 1; d <= daysInMonth; d++) {
+    const dateStr = `${year}-${padDay(month)}-${padDay(d)}`
+    if (isRegularHoliday(dateStr)) {
+      regularHolidayCount++
+      continue
+    }
+    totalBusinessDays++
+    if (d <= today) businessDaysElapsed++
+    else businessDaysRemaining++
+  }
   const prevMonth = month === 1 ? 12 : month - 1
   const prevMonthYear = month === 1 ? year - 1 : year
 
@@ -56,8 +77,10 @@ export async function GET() {
   const ytdCustomers = ytdData.reduce((s, m) => s + m.customers, 0)
 
   // ── 着地予測 ──────────────────────────────────────────────────
-  const dailyAvg = today > 0 ? Math.round(currentSales / today) : 0
-  const paceEstimate = Math.round(dailyAvg * daysInMonth)
+  // dailyAvg は「1営業日あたり平均」（定休日は分母に含めない）
+  // paceEstimate は「現実績 + 残営業日数 × dailyAvg」で算出
+  const dailyAvg = businessDaysElapsed > 0 ? Math.round(currentSales / businessDaysElapsed) : 0
+  const paceEstimate = currentSales + Math.round(dailyAvg * businessDaysRemaining)
 
   // YoY成長率
   let yoyRate: number | null = null
@@ -107,8 +130,8 @@ export async function GET() {
     .sort((a, b) => b.sales - a.sales)
     .map(s => {
       const cap = getStoreRevenueCap(s.store)
-      const storeDaily = today > 0 ? Math.round(s.sales / today) : 0
-      let storeForecast = Math.round(storeDaily * daysInMonth)
+      const storeDaily = businessDaysElapsed > 0 ? Math.round(s.sales / businessDaysElapsed) : 0
+      let storeForecast = s.sales + Math.round(storeDaily * businessDaysRemaining)
       if (cap) storeForecast = Math.min(storeForecast, Math.round(cap * 0.85))
       const prevY = storePrevYear.find(p => p.store === s.store)
       const storeYoY = prevY && prevY.sales > 0 ? ((s.sales - prevY.sales) / prevY.sales * 100) : null
@@ -165,16 +188,17 @@ export async function GET() {
   if (monthTarget && monthTarget > 0) {
     const forecastRate = (standardForecast / monthTarget) * 100
     if (forecastRate < 90) {
-      const dailyNeeded = remaining > 0 ? Math.round((monthTarget - currentSales) / remaining) : 0
+      // 必要日平均は「残営業日数」で割る（定休日には積み増せないため）
+      const dailyNeeded = businessDaysRemaining > 0 ? Math.round((monthTarget - currentSales) / businessDaysRemaining) : 0
       analysisColumns.push({
-        title: `目標未達リスク: 着地${Math.round(forecastRate)}%（残${remaining}日）`,
+        title: `目標未達リスク: 着地${Math.round(forecastRate)}%（残${remaining}日 / 営業${businessDaysRemaining}日）`,
         body: `現ペース日平均${Math.round(dailyAvg / 10000)}万に対し達成には${Math.round(dailyNeeded / 10000)}万/日が必要。週末予約枠の最大化、ホットペッパークーポン配信、オプション提案の徹底を全店に指示。`,
         priority: 'high',
       })
     } else if (forecastRate < 100) {
       analysisColumns.push({
         title: `目標射程圏内: 着地${Math.round(forecastRate)}%`,
-        body: `残${remaining}日で日平均${Math.round(((monthTarget - currentSales) / Math.max(remaining, 1)) / 10000)}万を確保すれば達成。LINEクーポンで空き枠を埋め、オプション追加提案で客単価UPを。`,
+        body: `残${remaining}日（営業${businessDaysRemaining}日）で日平均${Math.round(((monthTarget - currentSales) / Math.max(businessDaysRemaining, 1)) / 10000)}万を確保すれば達成。LINEクーポンで空き枠を埋め、オプション追加提案で客単価UPを。`,
         priority: 'medium',
       })
     } else {
@@ -271,6 +295,10 @@ export async function GET() {
     today,
     daysInMonth,
     remaining,
+    businessDaysElapsed,
+    businessDaysRemaining,
+    totalBusinessDays,
+    regularHolidayCount,
     dateLabel: `${month}/${today}時点`,
     currentSales,
     currentCustomers,

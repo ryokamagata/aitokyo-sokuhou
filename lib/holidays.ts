@@ -111,3 +111,83 @@ export function getHolidayMap(fromDate: string, toDate: string): Record<string, 
   }
   return map
 }
+
+// ────────────────────────────────────────────────────────────
+// サロン定休日（地域別）
+// ────────────────────────────────────────────────────────────
+
+export type SalonRegion = 'tokyo'
+
+/**
+ * 地域別の定休日ルール。
+ * - peakMonths: 繁忙期（定休日なし）
+ * - regularHolidayMondays: 通常期に休む「第N月曜」のリスト（1=第1, 2=第2, ...）
+ * 地域追加時はここにエントリを足すだけで全予測ロジックに反映される。
+ */
+export const SALON_REGULAR_HOLIDAY_RULES: Record<SalonRegion, {
+  peakMonths: number[]
+  regularHolidayMondays: number[]
+}> = {
+  tokyo: {
+    peakMonths: [3, 7, 12],
+    regularHolidayMondays: [2, 4],
+  },
+}
+
+/** 指定日（YYYY-MM-DD）が指定地域の定休日かどうか */
+export function isRegularHoliday(dateStr: string, region: SalonRegion = 'tokyo'): boolean {
+  const rule = SALON_REGULAR_HOLIDAY_RULES[region]
+  const year = parseInt(dateStr.slice(0, 4))
+  const month = parseInt(dateStr.slice(5, 7))
+  const day = parseInt(dateStr.slice(8, 10))
+  if (rule.peakMonths.includes(month)) return false
+  // その日が「第N月曜」なら定休日
+  const dow = new Date(year, month - 1, day).getDay()
+  if (dow !== 1) return false
+  // 何回目の月曜か
+  const nth = Math.floor((day - 1) / 7) + 1
+  return rule.regularHolidayMondays.includes(nth)
+}
+
+/** 指定年月の定休日リスト（YYYY-MM-DD） */
+export function getRegularHolidaysForMonth(
+  year: number,
+  month: number,
+  region: SalonRegion = 'tokyo'
+): string[] {
+  const rule = SALON_REGULAR_HOLIDAY_RULES[region]
+  if (rule.peakMonths.includes(month)) return []
+  const pad = (n: number) => String(n).padStart(2, '0')
+  const result: string[] = []
+  for (const nth of rule.regularHolidayMondays) {
+    const day = getNthMonday(year, month, nth)
+    const daysInMonth = new Date(year, month, 0).getDate()
+    if (day >= 1 && day <= daysInMonth) {
+      result.push(`${year}-${pad(month)}-${pad(day)}`)
+    }
+  }
+  return result
+}
+
+/** 指定期間の定休日Map（true値） */
+export function getRegularHolidayMap(
+  fromDate: string,
+  toDate: string,
+  region: SalonRegion = 'tokyo'
+): Record<string, true> {
+  const map: Record<string, true> = {}
+  const fromY = parseInt(fromDate.slice(0, 4))
+  const fromM = parseInt(fromDate.slice(5, 7))
+  const toY = parseInt(toDate.slice(0, 4))
+  const toM = parseInt(toDate.slice(5, 7))
+  let y = fromY
+  let m = fromM
+  while (y < toY || (y === toY && m <= toM)) {
+    for (const date of getRegularHolidaysForMonth(y, m, region)) {
+      if (date >= fromDate && date <= toDate) map[date] = true
+    }
+    m++
+    if (m > 12) { m = 1; y++ }
+  }
+  return map
+}
