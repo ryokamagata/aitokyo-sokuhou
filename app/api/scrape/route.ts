@@ -3,6 +3,7 @@ import { logScrape } from '@/lib/db'
 import type { ScrapeProgress } from '@/lib/bmScraper'
 
 export const dynamic = 'force-dynamic'
+export const maxDuration = 300 // 5 minutes — 11店舗 × 6ページのフェッチで60秒を超えるため
 
 export async function POST() {
   const now = new Date(new Date().toLocaleString('en-US', { timeZone: 'Asia/Tokyo' }))
