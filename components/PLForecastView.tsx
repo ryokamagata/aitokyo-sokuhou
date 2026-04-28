@@ -143,6 +143,25 @@ export default function PLForecastView() {
   const f = data.forecast
   const kpi = data.kpi
 
+  // ── 動的な日付パラメータ（ハードコード排除） ──────────────────────
+  // confirmedThrough: 「先月」までを確定扱い（今が4月なら 2026-03 まで確定）
+  // paramRange: 直近6ヶ月（先月を末尾とする）を変動率/固定費の自動算出に使う
+  // fiscalStartYear: 9月決算（AI TOKYOは9月期）を前提にした会計年度開始年
+  const tokyoNow = new Date(new Date().toLocaleString('en-US', { timeZone: 'Asia/Tokyo' }))
+  const curY = tokyoNow.getFullYear()
+  const curM = tokyoNow.getMonth() + 1
+  const prev = (() => {
+    const d = new Date(curY, curM - 2, 1) // curM-2 because Date months are 0-indexed
+    return { year: d.getFullYear(), month: d.getMonth() + 1 }
+  })()
+  const sixAgo = (() => {
+    const d = new Date(prev.year, prev.month - 6, 1)
+    return { year: d.getFullYear(), month: d.getMonth() + 1 }
+  })()
+  const fiscalStartYear = curM >= 9 ? curY : curY - 1
+  const confirmedThrough = `${prev.year}-${String(prev.month).padStart(2, '0')}`
+  const paramRangeLabel = `${sixAgo.year}年${sixAgo.month}月〜${prev.year}年${prev.month}月`
+
   // subcategory 別に集計
   const subcats: { cat: 'cogs' | 'sga'; subcat: string; lines: PLLine[]; total: number }[] = []
   for (const cat of ['cogs', 'sga'] as const) {
@@ -225,31 +244,74 @@ export default function PLForecastView() {
       </div>
 
       {/* 取込/シード */}
-      <div className="bg-gray-800 rounded-xl p-4 space-y-2">
-        <h2 className="text-sm font-medium text-gray-300">確定PL データ操作</h2>
-        <p className="text-[11px] text-gray-500">
-          ① Googleシート（月次決算速報値・2025年9月期〜）から実績PLを取込／② シートに繋がない時用の同梱サンプルから取込／③ 取込済みの実績から変動費率・固定費を自動算出
-        </p>
-        <div className="flex flex-wrap gap-2">
-          <button onClick={() => callApi('/api/import-pl-spreadsheet', { fiscalStartYear: 2025, confirmedThrough: '2026-02' }, 'Googleシート取込')}
-                  disabled={busy} className="text-xs px-3 py-1.5 bg-blue-600 hover:bg-blue-500 disabled:bg-gray-700 text-white rounded-md">
-            ① Googleシートから実績PLを取込
-          </button>
-          <button onClick={() => callApi('/api/seed-pl-from-text', { useFixture: true, fiscalStartYear: 2025, confirmedThrough: '2026-02' }, '同梱サンプル取込')}
-                  disabled={busy} className="text-xs px-3 py-1.5 bg-cyan-600 hover:bg-cyan-500 disabled:bg-gray-700 text-white rounded-md">
-            ② 同梱サンプルから取込（オフラインテスト用）
-          </button>
-          <button onClick={() => callApi('/api/seed-pl-params', { fromYear: 2025, fromMonth: 9, toYear: 2026, toMonth: 2 }, '変動率/固定費 自動算出')}
-                  disabled={busy} className="text-xs px-3 py-1.5 bg-purple-600 hover:bg-purple-500 disabled:bg-gray-700 text-white rounded-md">
-            ③ 実績から変動率/固定費を自動算出
-          </button>
+      <div className="bg-gray-800 rounded-xl p-4 space-y-3">
+        <div className="flex items-center justify-between flex-wrap gap-2">
+          <h2 className="text-sm font-medium text-gray-300">確定PL データ操作</h2>
           <a href={`https://docs.google.com/spreadsheets/d/12Jo2w0pjKi_cUongNdmtzFS0sHbuZDAhWnBSAKxgxBo/edit`}
              target="_blank" rel="noreferrer"
              className="text-xs px-3 py-1.5 bg-gray-700 hover:bg-gray-600 text-gray-200 rounded-md">
-            元シートを開く
+            元シートを開く ↗
           </a>
         </div>
-        {msg && <p className="text-xs text-gray-400 mt-1 whitespace-pre-wrap">{msg}</p>}
+        <p className="text-[11px] text-gray-500">
+          通常運用フロー: <span className="text-gray-300 font-medium">① 取込 → ③ 自動算出</span> の順に押せば、最新実績が予測PLに反映されます。
+          確定対象は今日基準で自動的に「<span className="text-gray-300">{prev.year}年{prev.month}月まで</span>」になります。
+        </p>
+
+        <div className="space-y-2">
+          {/* ① */}
+          <div className="border border-gray-700 rounded-lg p-3 space-y-1.5">
+            <div className="flex items-start justify-between flex-wrap gap-2">
+              <button onClick={() => callApi('/api/import-pl-spreadsheet', { fiscalStartYear, confirmedThrough }, `Googleシート取込（〜${prev.year}年${prev.month}月確定）`)}
+                      disabled={busy} className="text-xs px-3 py-1.5 bg-blue-600 hover:bg-blue-500 disabled:bg-gray-700 text-white rounded-md font-medium">
+                ① Googleシートから実績PLを取込
+              </button>
+              <span className="text-[10px] text-blue-300/70 px-2 py-0.5 bg-blue-900/30 rounded">経理の月次更新後に実行</span>
+            </div>
+            <p className="text-[11px] text-gray-400 leading-relaxed">
+              <span className="text-gray-300">▶ 押すと:</span> 月次決算速報値シートを読み込み、科目×店舗×月の金額を実績データとして DB 保存します（<span className="text-gray-300">{prev.year}年{prev.month}月まで</span>を「確定」、それ以降を「速報」扱い）。
+            </p>
+            <p className="text-[11px] text-gray-500">
+              <span className="text-gray-400">▶ 効果:</span> 過去月の予測PLが実績値で上書きされ、「実績」バッジ付きで表示されるようになります。
+            </p>
+          </div>
+
+          {/* ② */}
+          <div className="border border-gray-700 rounded-lg p-3 space-y-1.5 opacity-80">
+            <div className="flex items-start justify-between flex-wrap gap-2">
+              <button onClick={() => callApi('/api/seed-pl-from-text', { useFixture: true, fiscalStartYear, confirmedThrough }, '同梱サンプル取込')}
+                      disabled={busy} className="text-xs px-3 py-1.5 bg-cyan-700 hover:bg-cyan-600 disabled:bg-gray-700 text-white rounded-md font-medium">
+                ② 同梱サンプルから取込
+              </button>
+              <span className="text-[10px] text-gray-400 px-2 py-0.5 bg-gray-700 rounded">通常使用しません</span>
+            </div>
+            <p className="text-[11px] text-gray-400 leading-relaxed">
+              <span className="text-gray-300">▶ 押すと:</span> リポジトリ内の同梱サンプル(<code className="text-gray-300">seed-pl-fy25.tsv</code>)を①と同じテーブルに投入します。
+            </p>
+            <p className="text-[11px] text-gray-500">
+              <span className="text-gray-400">▶ 用途:</span> シートにアクセスできない開発・検証時専用。本番運用では押さなくて OK。
+            </p>
+          </div>
+
+          {/* ③ */}
+          <div className="border border-gray-700 rounded-lg p-3 space-y-1.5">
+            <div className="flex items-start justify-between flex-wrap gap-2">
+              <button onClick={() => callApi('/api/seed-pl-params', { fromYear: sixAgo.year, fromMonth: sixAgo.month, toYear: prev.year, toMonth: prev.month }, `変動率/固定費 自動算出（${paramRangeLabel}）`)}
+                      disabled={busy} className="text-xs px-3 py-1.5 bg-purple-600 hover:bg-purple-500 disabled:bg-gray-700 text-white rounded-md font-medium">
+                ③ 実績から変動率/固定費を自動算出
+              </button>
+              <span className="text-[10px] text-purple-300/70 px-2 py-0.5 bg-purple-900/30 rounded">①の後に実行</span>
+            </div>
+            <p className="text-[11px] text-gray-400 leading-relaxed">
+              <span className="text-gray-300">▶ 押すと:</span> ①で取込済みの過去実績(<span className="text-gray-300">{paramRangeLabel}</span>)を分析し、「材料費=売上の○%」のような変動率と「家賃=月○円」のような固定費を逆算して保存します。
+            </p>
+            <p className="text-[11px] text-gray-500">
+              <span className="text-gray-400">▶ 効果:</span> 当月の予測PLのコスト計算が、最新の過去実績ベースに更新されます（営業利益の精度が上がる）。
+            </p>
+          </div>
+        </div>
+
+        {msg && <p className="text-xs text-gray-300 bg-gray-900/60 rounded p-2 whitespace-pre-wrap">{msg}</p>}
       </div>
 
       {/* データソース（売上・コストの出処） */}
