@@ -269,19 +269,21 @@ function aggregate(
   const sgaOther = sum(l => l.category === 'sga' && l.subcategory === 'other')
 
   // 損益分岐点売上高 = 固定費 / (1 - 変動費率)
-  // 業界実態に合わせた分類:
-  //   変動費 = subcategory='material' のうち真に売上連動する科目 (材料費・薬剤・消耗品・支払手数料カード)
-  //   固定費 = それ以外 (人件費・家賃・水光熱・広告・通信・その他販管費 ＋ 賃借料・通勤手当などの定額系)
-  // 重要: 「人件費」(subcategory='personnel') は cogs_professional を含めて常に固定費扱い。
-  //       美容業界のプロ契約報酬は売上連動だが、経営上は人件費として固定費的に管理するため。
+  // AI TOKYO 経営感覚に合わせた分類（業界実態に近い）:
+  //   変動費 = 材料費・薬剤・消耗品・カード手数料 + プロ契約報酬(売上連動の歩合)
+  //   固定費 = 給与手当・法定福利費・通勤手当・役員報酬・家賃・水光・広告等
   const isVariableLine = (l: PLLine): boolean => {
-    // 人件費は常に固定費
-    if (l.subcategory === 'personnel') return false
-    // 家賃・リース、水道光熱、広告宣伝（採用含む）、家賃的な固定支出は固定費
-    if (l.subcategory === 'rent' || l.subcategory === 'utility' || l.subcategory === 'promo') return false
+    // プロ契約報酬は常に変動費扱い（経営感覚の業界実態）
+    if (l.code === 'cogs_professional') return true
     // sga_banking はカード手数料 (売上連動)
     if (l.code === 'sga_banking') return true
-    // それ以外の material 科目で、デフォルトで変動率が定義されているもののみ変動費
+    // 明示的に固定費として保存されているものは固定費
+    if (l.source === 'fixed') return false
+    // 家賃・水道光熱・広告宣伝は常に固定費
+    if (l.subcategory === 'rent' || l.subcategory === 'utility' || l.subcategory === 'promo') return false
+    // 人件費（給与系）は固定費
+    if (l.subcategory === 'personnel') return false
+    // material のうち、デフォルトで変動率が定義されているもの
     if (l.subcategory === 'material' && DEFAULT_VARIABLE_RATES[l.code] !== undefined) return true
     // 手動で variable rate が設定されている科目は変動費
     if (l.source === 'variable') return true

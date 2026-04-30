@@ -186,8 +186,6 @@ export default function PLForecastView({ dataVersion = 0 }: { dataVersion?: numb
   }
 
   const breakEven = f.breakEvenRevenue
-  const breakEvenGap = f.revenue - breakEven
-  const breakEvenGapPct = f.revenue > 0 ? breakEvenGap / f.revenue : 0
 
   return (
     <div className="space-y-4">
@@ -218,29 +216,15 @@ export default function PLForecastView({ dataVersion = 0 }: { dataVersion?: numb
         </div>
 
         {/* 損益分岐点 */}
-        {breakEven > 0 && (
-          <div className="bg-gray-900/50 rounded-lg p-3">
-            <div className="flex items-center justify-between mb-1">
-              <p className="text-xs font-medium text-gray-400">損益分岐点売上</p>
-              <span className={`text-xs font-bold ${breakEvenGap >= 0 ? 'text-green-400' : 'text-red-400'}`}>
-                {formatYenCompact(breakEven)} / ギャップ {breakEvenGap >= 0 ? '+' : ''}{formatYenCompact(breakEvenGap)}（{pct(breakEvenGapPct)}）
-              </span>
-            </div>
-            <div className="h-2 bg-gray-800 rounded-full overflow-hidden">
-              <div className={`h-full ${breakEvenGap >= 0 ? 'bg-green-500' : 'bg-red-500'}`}
-                   style={{ width: `${Math.max(5, Math.min(100, (f.revenue / (breakEven || 1)) * 100))}%` }} />
-            </div>
-            <div className="mt-2 text-[10px] text-gray-500 flex items-center justify-between gap-2 flex-wrap">
-              <span>固定費 <span className="text-gray-300 font-medium">{formatYenCompact(f.fixedCost)}</span></span>
-              <span>変動費 <span className="text-gray-300 font-medium">{formatYenCompact(f.variableCost)}</span></span>
-              <span>変動費率 <span className="text-gray-300 font-medium">{(f.variableCostRate * 100).toFixed(1)}%</span></span>
-              <span className="text-gray-600">BE = 固定費 / (1 − 変動費率)</span>
-            </div>
-            <p className="text-[10px] text-gray-600 mt-1 leading-relaxed">
-              ※ 人件費（給与・支払報酬料・法定福利・通勤手当・役員報酬等）は売上連動でも経営上は固定費として分類しています。変動費＝材料費・薬剤・消耗品・カード手数料のみ。
-            </p>
-          </div>
-        )}
+        <BreakEvenCard
+          year={data.year}
+          month={data.month}
+          revenue={f.revenue}
+          autoBreakEven={breakEven}
+          fixedCost={f.fixedCost}
+          variableCost={f.variableCost}
+          variableCostRate={f.variableCostRate}
+        />
 
         {/* KPI5% */}
         <div className="bg-gray-900/50 rounded-lg p-3">
@@ -745,6 +729,132 @@ function FixedCostEditor({ year, month, onSaved }: { year: number; month: number
           </div>
         </div>
       )}
+    </div>
+  )
+}
+
+// ─── 損益分岐点カード（経営目標BE + 自動算出BE 併記） ──────────
+function BreakEvenCard({
+  year, month, revenue, autoBreakEven, fixedCost, variableCost, variableCostRate,
+}: {
+  year: number; month: number; revenue: number
+  autoBreakEven: number; fixedCost: number; variableCost: number; variableCostRate: number
+}) {
+  const [target, setTarget] = useState<number | null>(null)
+  const [isDefault, setIsDefault] = useState(true)
+  const [editing, setEditing] = useState(false)
+  const [input, setInput] = useState<string>('')
+  const [busy, setBusy] = useState(false)
+  const [msg, setMsg] = useState<string | null>(null)
+
+  const fetchTarget = useCallback(async () => {
+    const res = await fetch(`/api/pl-be-target?year=${year}&month=${month}`, { cache: 'no-store' })
+    const j = await res.json()
+    const v = j.value ?? j.suggestedDefault
+    setTarget(v)
+    setIsDefault(j.isDefault)
+    setInput(String(v))
+  }, [year, month])
+
+  useEffect(() => { fetchTarget() }, [fetchTarget])
+
+  const saveTarget = async (applyToAllMonths: boolean) => {
+    const v = parseFloat(input.replace(/[,¥\s]/g, ''))
+    if (!Number.isFinite(v) || v < 0) { setMsg('数値を入力してください'); return }
+    setBusy(true); setMsg(null)
+    try {
+      const res = await fetch('/api/pl-be-target', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ year, month, value: v, applyToAllMonths }),
+      })
+      const j = await res.json()
+      if (!res.ok || !j.ok) {
+        setMsg(`保存失敗: ${j.error ?? res.statusText}`)
+      } else {
+        setMsg(applyToAllMonths ? '今年の全月に適用しました' : '当月のみ保存しました')
+        setEditing(false)
+        await fetchTarget()
+      }
+    } finally { setBusy(false) }
+  }
+
+  // 表示するBE。経営目標値があれば優先、なければ自動算出
+  const displayBE = target ?? autoBreakEven
+  const gap = revenue - displayBE
+  const gapPct = revenue > 0 ? gap / revenue : 0
+  const diffFromAuto = displayBE - autoBreakEven
+
+  if (displayBE <= 0 && autoBreakEven <= 0) return null
+
+  return (
+    <div className="bg-gray-900/50 rounded-lg p-3 space-y-2">
+      <div className="flex items-center justify-between gap-2 flex-wrap">
+        <p className="text-xs font-medium text-gray-400">
+          損益分岐点売上
+          {target !== null && (
+            <span className="ml-1 text-[10px] px-1.5 py-0.5 bg-amber-900/50 text-amber-300 rounded">
+              {isDefault ? '経営目標(デフォルト)' : '経営目標'}
+            </span>
+          )}
+        </p>
+        <span className={`text-xs font-bold ${gap >= 0 ? 'text-green-400' : 'text-red-400'}`}>
+          {formatYenCompact(displayBE)} / ギャップ {gap >= 0 ? '+' : ''}{formatYenCompact(gap)}（{pct(gapPct)}）
+        </span>
+      </div>
+      <div className="h-2 bg-gray-800 rounded-full overflow-hidden">
+        <div className={`h-full ${gap >= 0 ? 'bg-green-500' : 'bg-red-500'}`}
+             style={{ width: `${Math.max(5, Math.min(100, (revenue / (displayBE || 1)) * 100))}%` }} />
+      </div>
+
+      {/* 自動算出値 (経営目標と並べて表示) */}
+      <div className="bg-gray-800/50 rounded p-2 text-[10px] text-gray-500">
+        <div className="flex justify-between mb-1">
+          <span>📊 システム自動算出 BE</span>
+          <span className="text-gray-300 font-medium">{formatYenCompact(autoBreakEven)}</span>
+        </div>
+        <div className="flex justify-between text-[10px] text-gray-600 gap-2 flex-wrap">
+          <span>固定費 <span className="text-gray-400">{formatYenCompact(fixedCost)}</span></span>
+          <span>変動費 <span className="text-gray-400">{formatYenCompact(variableCost)}</span></span>
+          <span>変動費率 <span className="text-gray-400">{(variableCostRate * 100).toFixed(1)}%</span></span>
+        </div>
+        {Math.abs(diffFromAuto) > 5_000_000 && (
+          <p className="mt-1 text-[10px] text-yellow-400/80">
+            ⚠ 経営目標と自動算出に {formatYenCompact(Math.abs(diffFromAuto))} の差があります。
+            「① 過去月の実績PLを取込」を実行すると自動算出が実態に近づきます。
+          </p>
+        )}
+      </div>
+
+      {/* 経営目標BEの編集 */}
+      <div className="flex items-center gap-2 flex-wrap">
+        {!editing ? (
+          <button onClick={() => setEditing(true)}
+                  className="text-[10px] px-2 py-0.5 bg-amber-900/40 hover:bg-amber-900/60 text-amber-300 rounded">
+            🎯 経営目標BEを編集
+          </button>
+        ) : (
+          <>
+            <input value={input} onChange={e => setInput(e.target.value)}
+                   placeholder="例: 88000000"
+                   inputMode="numeric"
+                   className="bg-gray-900 text-gray-100 text-[11px] rounded px-2 py-1 border border-gray-700 w-32" />
+            <button onClick={() => saveTarget(false)} disabled={busy}
+                    className="text-[10px] px-2 py-1 bg-emerald-700 hover:bg-emerald-600 disabled:bg-gray-700 text-white rounded">
+              当月のみ保存
+            </button>
+            <button onClick={() => saveTarget(true)} disabled={busy}
+                    className="text-[10px] px-2 py-1 bg-blue-700 hover:bg-blue-600 disabled:bg-gray-700 text-white rounded">
+              今年の全月に適用
+            </button>
+            <button onClick={() => { setEditing(false); setInput(String(target ?? '')) }}
+                    className="text-[10px] px-2 py-1 bg-gray-700 hover:bg-gray-600 text-gray-300 rounded">
+              キャンセル
+            </button>
+          </>
+        )}
+        {msg && <span className="text-[10px] text-gray-400">{msg}</span>}
+      </div>
     </div>
   )
 }

@@ -31,6 +31,8 @@ function monthsAgo(year: number, month: number, n: number): { year: number; mont
 }
 
 function isPersonnel(acc: CostAccount): boolean {
+  // プロ契約報酬は売上連動の変動費扱いなので人件費按分の対象から除外
+  if (acc.code === 'cogs_professional') return false
   return acc.subcategory === 'personnel' && (acc.category === 'cogs' || acc.category === 'sga')
 }
 
