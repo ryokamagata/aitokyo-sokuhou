@@ -1,5 +1,5 @@
 import { NextResponse } from 'next/server'
-import { getAllStaffMaster, upsertStaffMaster, getStaffSalesForMonth, getMonthlyStaffSales, upsertFixedCost, type StaffMaster } from '@/lib/db'
+import { getAllStaffMaster, upsertStaffMaster, deleteStaffMasterByNames, getStaffSalesForMonth, getMonthlyStaffSales, upsertFixedCost, type StaffMaster } from '@/lib/db'
 import { normalizeStaffName } from '@/lib/staffNormalize'
 
 export const dynamic = 'force-dynamic'
@@ -166,14 +166,25 @@ export async function POST(req: Request) {
   let body: {
     staff?: { staff_name: string; type: string; base_salary?: number; rate?: number; position_allowance?: number; active?: number; notes?: string | null }[]
     applyMonth?: string
+    deleteNames?: string[]  // 指定した staff_name のマスタ行を削除（過去のテストデータ等のクリーンアップ用）
   }
   try {
     body = await req.json()
   } catch {
     return NextResponse.json({ ok: false, error: 'invalid json body' }, { status: 400 })
   }
+
+  // 削除のみのリクエスト（staff 不要）
+  let deletedCount = 0
+  if (Array.isArray(body.deleteNames) && body.deleteNames.length > 0) {
+    deletedCount = deleteStaffMasterByNames(body.deleteNames)
+  }
+
   const staff = body.staff
   if (!Array.isArray(staff) || staff.length === 0) {
+    if (deletedCount > 0) {
+      return NextResponse.json({ ok: true, saved: 0, deleted: deletedCount, applied: null })
+    }
     return NextResponse.json({ ok: false, error: 'staff array required' }, { status: 400 })
   }
   for (const s of staff) {
@@ -253,5 +264,5 @@ export async function POST(req: Request) {
     }
   }
 
-  return NextResponse.json({ ok: true, saved: rows.length, applied })
+  return NextResponse.json({ ok: true, saved: rows.length, deleted: deletedCount, applied })
 }
