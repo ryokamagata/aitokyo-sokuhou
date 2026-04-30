@@ -60,6 +60,8 @@ export async function GET(req: Request) {
   const recentRows = getMonthlyStaffSales(fromY, fromM, toY, toM)
 
   const salesByStaff = new Map<string, { total: number; months: number }>()
+  // 表示用に最初に出会ったオリジナル名を保持（normalize後のキーから元名を引くため）
+  const displayNameByKey = new Map<string, string>()
   const monthsSet = new Set<string>()
   for (const r of recentRows) {
     const k = `${r.year}-${r.month}`
@@ -67,6 +69,7 @@ export async function GET(req: Request) {
     const name = normalizeStaffName(r.staff)
     if (!name || name === '不明' || name === 'フリー') continue
     if (!salesByStaff.has(name)) salesByStaff.set(name, { total: 0, months: 0 })
+    if (!displayNameByKey.has(name)) displayNameByKey.set(name, r.staff)
     const e = salesByStaff.get(name)!
     e.total += r.sales
     e.months += 1
@@ -79,10 +82,18 @@ export async function GET(req: Request) {
     const name = normalizeStaffName(r.staff)
     if (!name || name === '不明' || name === 'フリー') continue
     if (!salesByStaff.has(name)) salesByStaff.set(name, { total: 0, months: 0 })
+    if (!displayNameByKey.has(name)) displayNameByKey.set(name, r.staff)
   }
 
   const masters = getAllStaffMaster()
   const masterByName = new Map<string, StaffMaster>(masters.map(m => [normalizeStaffName(m.staff_name), m]))
+
+  // マスタ登録済みでBM売上ゼロのスタッフ（特にアシスタント）も一覧に含める
+  for (const m of masters) {
+    const key = normalizeStaffName(m.staff_name)
+    if (!salesByStaff.has(key)) salesByStaff.set(key, { total: 0, months: 0 })
+    if (!displayNameByKey.has(key)) displayNameByKey.set(key, m.staff_name)
+  }
 
   type Row = {
     staff_name: string
@@ -99,8 +110,9 @@ export async function GET(req: Request) {
   const list: Row[] = [...salesByStaff.entries()].map(([name, v]) => {
     const m = masterByName.get(name)
     const avgMonthlySales = v.months > 0 ? Math.round(v.total / v.months) : 0
+    const displayName = m?.staff_name ?? displayNameByKey.get(name) ?? name
     const settings = m ?? {
-      staff_name: name,
+      staff_name: displayName,
       type: 'fulltime',
       base_salary: PRO_FULLTIME_BASE,
       rate: FULLTIME_DEFAULT_RATE,
