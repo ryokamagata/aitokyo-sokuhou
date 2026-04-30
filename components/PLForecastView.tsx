@@ -868,6 +868,7 @@ type StaffSalaryRow = {
   type: 'pro' | 'fulltime' | 'assistant' | string
   base_salary: number
   rate: number
+  position_allowance: number
   active: number
   notes: string | null
   avgMonthlySales: number
@@ -916,8 +917,8 @@ function StaffSalaryEditor({ year, month, onSaved }: { year: number; month: numb
     return { ...r, ...e } as StaffSalaryRow
   }
 
-  // プレビュー再計算
-  const recalcSalary = (r: StaffSalaryRow): number => {
+  // プレビュー再計算（基本給 + 役職手当）
+  const recalcBaseSalary = (r: StaffSalaryRow): number => {
     if (!r.active) return 0
     if (r.type === 'assistant') return r.base_salary || 220_000
     if (r.type === 'pro') {
@@ -929,6 +930,10 @@ function StaffSalaryEditor({ year, month, onSaved }: { year: number; month: numb
       return Math.max(byRate, r.base_salary || 240_000)
     }
     return r.base_salary
+  }
+  const recalcSalary = (r: StaffSalaryRow): number => {
+    if (!r.active) return 0
+    return recalcBaseSalary(r) + (r.position_allowance ?? 0)
   }
 
   const saveAndApply = async (apply: boolean) => {
@@ -942,6 +947,7 @@ function StaffSalaryEditor({ year, month, onSaved }: { year: number; month: numb
           type: m.type,
           base_salary: m.base_salary,
           rate: m.rate,
+          position_allowance: m.position_allowance,
           active: m.active,
         }
       })
@@ -973,12 +979,14 @@ function StaffSalaryEditor({ year, month, onSaved }: { year: number; month: numb
   // 編集後の集計プレビュー
   const previewByType = { pro: 0, fulltime: 0, assistant: 0 }
   let activeCount = 0
+  let totalAllowance = 0
   for (const r of data.rows) {
     const m = merged(r)
     const sal = recalcSalary(m)
     if (m.active && (m.type === 'pro' || m.type === 'fulltime' || m.type === 'assistant')) {
       previewByType[m.type as 'pro' | 'fulltime' | 'assistant'] += sal
       activeCount++
+      totalAllowance += m.position_allowance ?? 0
     }
   }
   const previewGrand = previewByType.pro + previewByType.fulltime + previewByType.assistant
@@ -990,7 +998,8 @@ function StaffSalaryEditor({ year, month, onSaved }: { year: number; month: numb
           <h2 className="text-sm font-medium text-gray-300">📋 スタッフ別ルール計算（経理推奨）</h2>
           <p className="text-[11px] text-gray-500 leading-relaxed mt-1">
             ルール: プロ契約 = max(売上×38%, ¥24万) / 正社員 = max(売上×30%, ¥24万) / アシスタント = ¥22万固定。
-            BMから自動取得した過去{data.referenceMonths}ヶ月の月平均売上で計算しています。
+            <br />合計給与 = 上記の基本給 ＋ 役職手当（必要なスタッフに任意金額を入力）。
+            <br />BMから自動取得した過去{data.referenceMonths}ヶ月の月平均売上で計算しています。
           </p>
         </div>
         <button onClick={() => setCollapsed(!collapsed)}
@@ -1000,7 +1009,7 @@ function StaffSalaryEditor({ year, month, onSaved }: { year: number; month: numb
       </div>
 
       {/* 集計サマリ */}
-      <div className="grid grid-cols-3 sm:grid-cols-4 gap-2 text-[11px]">
+      <div className="grid grid-cols-2 sm:grid-cols-5 gap-2 text-[11px]">
         <div className="bg-gray-900/40 rounded p-2">
           <div className="text-gray-500">プロ契約</div>
           <div className="text-gray-200 font-medium">{data.summary.countByType.pro}人 / ¥{Math.round(previewByType.pro).toLocaleString()}</div>
@@ -1012,6 +1021,10 @@ function StaffSalaryEditor({ year, month, onSaved }: { year: number; month: numb
         <div className="bg-gray-900/40 rounded p-2">
           <div className="text-gray-500">アシスタント</div>
           <div className="text-gray-200 font-medium">{data.summary.countByType.assistant}人 / ¥{Math.round(previewByType.assistant).toLocaleString()}</div>
+        </div>
+        <div className="bg-amber-900/30 rounded p-2 border border-amber-700/40">
+          <div className="text-amber-300">役職手当合計</div>
+          <div className="text-white font-medium">¥{Math.round(totalAllowance).toLocaleString()}</div>
         </div>
         <div className="bg-blue-900/30 rounded p-2 border border-blue-700/40">
           <div className="text-blue-300">合計人件費</div>
@@ -1031,14 +1044,17 @@ function StaffSalaryEditor({ year, month, onSaved }: { year: number; month: numb
                   <th className="text-right py-1.5 pr-2">月給ベース</th>
                   <th className="text-right py-1.5 pr-2">歩合率</th>
                   <th className="text-right py-1.5 pr-2">月平均売上</th>
-                  <th className="text-right py-1.5 pr-2">計算給与</th>
+                  <th className="text-right py-1.5 pr-2">基本給</th>
+                  <th className="text-right py-1.5 pr-2">役職手当</th>
+                  <th className="text-right py-1.5 pr-2">合計給与</th>
                   <th className="text-center py-1.5 pr-2">有効</th>
                 </tr>
               </thead>
               <tbody>
                 {data.rows.map(r => {
                   const m = merged(r)
-                  const sal = recalcSalary(m)
+                  const baseSal = recalcBaseSalary(m)
+                  const totalSal = recalcSalary(m)
                   return (
                     <tr key={r.staff_name} className={`border-b border-gray-700/50 ${!m.active ? 'opacity-40' : ''}`}>
                       <td className="py-1 pr-2 text-gray-300">
@@ -1071,8 +1087,17 @@ function StaffSalaryEditor({ year, month, onSaved }: { year: number; month: numb
                       <td className="py-1 pr-2 text-right text-gray-400">
                         ¥{m.avgMonthlySales.toLocaleString()}
                       </td>
+                      <td className="py-1 pr-2 text-right text-gray-400">
+                        ¥{Math.round(baseSal).toLocaleString()}
+                      </td>
+                      <td className="py-1 pr-2 text-right">
+                        <input type="number" value={m.position_allowance ?? 0}
+                               onChange={e => updateRow(r.staff_name, { position_allowance: parseInt(e.target.value || '0', 10) })}
+                               placeholder="0"
+                               className="bg-gray-900 text-gray-100 text-[11px] rounded px-1 py-0.5 border border-gray-700 w-20 text-right" />
+                      </td>
                       <td className="py-1 pr-2 text-right text-gray-200 font-medium">
-                        ¥{Math.round(sal).toLocaleString()}
+                        ¥{Math.round(totalSal).toLocaleString()}
                       </td>
                       <td className="py-1 pr-2 text-center">
                         <input type="checkbox" checked={m.active === 1}

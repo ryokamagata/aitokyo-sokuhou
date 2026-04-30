@@ -28,7 +28,7 @@ const PRO_DEFAULT_RATE = 0.38
 const FULLTIME_DEFAULT_RATE = 0.30
 const PRO_FULLTIME_BASE = 240_000
 
-function calcSalary(s: { type: string; base_salary: number; rate: number }, monthlySales: number): number {
+function calcBaseSalary(s: { type: string; base_salary: number; rate: number }, monthlySales: number): number {
   if (s.type === 'assistant') return s.base_salary || ASSISTANT_DEFAULT_SALARY
   if (s.type === 'pro') {
     const byRate = monthlySales * (s.rate || PRO_DEFAULT_RATE)
@@ -39,6 +39,10 @@ function calcSalary(s: { type: string; base_salary: number; rate: number }, mont
     return Math.max(byRate, s.base_salary || PRO_FULLTIME_BASE)
   }
   return s.base_salary || PRO_FULLTIME_BASE
+}
+
+function calcSalary(s: { type: string; base_salary: number; rate: number; position_allowance?: number }, monthlySales: number): number {
+  return calcBaseSalary(s, monthlySales) + (s.position_allowance ?? 0)
 }
 
 export async function GET(req: Request) {
@@ -85,6 +89,7 @@ export async function GET(req: Request) {
     type: string
     base_salary: number
     rate: number
+    position_allowance: number
     active: number
     notes: string | null
     avgMonthlySales: number
@@ -99,6 +104,7 @@ export async function GET(req: Request) {
       type: 'fulltime',
       base_salary: PRO_FULLTIME_BASE,
       rate: FULLTIME_DEFAULT_RATE,
+      position_allowance: 0,
       active: 1,
       notes: null,
     }
@@ -108,6 +114,7 @@ export async function GET(req: Request) {
       type: settings.type,
       base_salary: settings.base_salary,
       rate: settings.rate,
+      position_allowance: settings.position_allowance ?? 0,
       active: settings.active,
       notes: settings.notes,
       avgMonthlySales,
@@ -145,7 +152,7 @@ export async function GET(req: Request) {
 
 export async function POST(req: Request) {
   let body: {
-    staff?: { staff_name: string; type: string; base_salary?: number; rate?: number; active?: number; notes?: string | null }[]
+    staff?: { staff_name: string; type: string; base_salary?: number; rate?: number; position_allowance?: number; active?: number; notes?: string | null }[]
     applyMonth?: string
   }
   try {
@@ -172,6 +179,8 @@ export async function POST(req: Request) {
     rate: typeof s.rate === 'number' && Number.isFinite(s.rate)
       ? s.rate
       : (s.type === 'pro' ? PRO_DEFAULT_RATE : s.type === 'fulltime' ? FULLTIME_DEFAULT_RATE : 0),
+    position_allowance: typeof s.position_allowance === 'number' && Number.isFinite(s.position_allowance) && s.position_allowance >= 0
+      ? s.position_allowance : 0,
     active: s.active ?? 1,
     notes: s.notes ?? null,
   }))
