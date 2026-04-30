@@ -34,6 +34,9 @@ type PLForecast = {
   lines: PLLine[]
   coverage: { actual: number; variable: number; fixed: number; default: number; empty: number }
   breakEvenRevenue: number
+  variableCost: number
+  fixedCost: number
+  variableCostRate: number
 }
 
 type DataSource = {
@@ -227,6 +230,15 @@ export default function PLForecastView({ dataVersion = 0 }: { dataVersion?: numb
               <div className={`h-full ${breakEvenGap >= 0 ? 'bg-green-500' : 'bg-red-500'}`}
                    style={{ width: `${Math.max(5, Math.min(100, (f.revenue / (breakEven || 1)) * 100))}%` }} />
             </div>
+            <div className="mt-2 text-[10px] text-gray-500 flex items-center justify-between gap-2 flex-wrap">
+              <span>固定費 <span className="text-gray-300 font-medium">{formatYenCompact(f.fixedCost)}</span></span>
+              <span>変動費 <span className="text-gray-300 font-medium">{formatYenCompact(f.variableCost)}</span></span>
+              <span>変動費率 <span className="text-gray-300 font-medium">{(f.variableCostRate * 100).toFixed(1)}%</span></span>
+              <span className="text-gray-600">BE = 固定費 / (1 − 変動費率)</span>
+            </div>
+            <p className="text-[10px] text-gray-600 mt-1 leading-relaxed">
+              ※ 人件費（給与・支払報酬料・法定福利・通勤手当・役員報酬等）は売上連動でも経営上は固定費として分類しています。変動費＝材料費・薬剤・消耗品・カード手数料のみ。
+            </p>
           </div>
         )}
 
