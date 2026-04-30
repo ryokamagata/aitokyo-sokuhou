@@ -178,6 +178,18 @@ function runMigrations(db: Database.Database) {
       UNIQUE(year, month, kpi_key)
     );
 
+    -- ─── スタッフマスタ（区分別給与計算用） ────────────────────────────
+    CREATE TABLE IF NOT EXISTS staff_master (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      staff_name TEXT UNIQUE NOT NULL,
+      type TEXT NOT NULL DEFAULT 'fulltime',  -- 'pro' | 'fulltime' | 'assistant'
+      base_salary INTEGER NOT NULL DEFAULT 240000,
+      rate REAL NOT NULL DEFAULT 0.30,
+      active INTEGER NOT NULL DEFAULT 1,
+      notes TEXT,
+      updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+    );
+
     -- ─── 予測PL: 科目マスタ / 確定PL / 固定費・変動費率 / 予測履歴 ─────────────
     CREATE TABLE IF NOT EXISTS cost_accounts (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -1199,6 +1211,43 @@ export function upsertVariableRate(
       'INSERT INTO cost_variable_rates(account_code, store, driver, rate, valid_from, valid_to) VALUES(?,?,?,?,?,?)'
     ).run(accountCode, storeKey, driver, rate, validFrom, validTo)
   }
+}
+
+// ─── スタッフマスタ ───────────────────────────────────────
+export type StaffMaster = {
+  id: number
+  staff_name: string
+  type: 'pro' | 'fulltime' | 'assistant'
+  base_salary: number
+  rate: number
+  active: number
+  notes: string | null
+}
+
+export function getAllStaffMaster(): StaffMaster[] {
+  const db = getDB()
+  return db.prepare(
+    'SELECT id, staff_name, type, base_salary, rate, active, notes FROM staff_master ORDER BY staff_name ASC'
+  ).all() as StaffMaster[]
+}
+
+export function upsertStaffMaster(rows: { staff_name: string; type: string; base_salary: number; rate: number; active?: number; notes?: string | null }[]): void {
+  const db = getDB()
+  const stmt = db.prepare(`
+    INSERT INTO staff_master(staff_name, type, base_salary, rate, active, notes, updated_at)
+    VALUES(@staff_name, @type, @base_salary, @rate, @active, @notes, datetime('now'))
+    ON CONFLICT(staff_name) DO UPDATE SET
+      type=excluded.type, base_salary=excluded.base_salary,
+      rate=excluded.rate, active=excluded.active, notes=excluded.notes,
+      updated_at=datetime('now')
+  `)
+  db.transaction(() => {
+    for (const r of rows) stmt.run({
+      staff_name: r.staff_name, type: r.type,
+      base_salary: Math.round(r.base_salary), rate: r.rate,
+      active: r.active ?? 1, notes: r.notes ?? null,
+    })
+  })()
 }
 
 export function savePLSnapshot(s: {
