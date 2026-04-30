@@ -69,9 +69,15 @@ export async function GET(req: Request) {
   const accounts = getCostAccounts().filter(isPersonnel)
   const actuals = getRecentCostActuals(start.year, start.month, last.year, last.month)
   const activeFixed = getFixedCosts(year, month).filter(f => f.store === null)
+  // 同じaccount_codeで複数有効なら valid_from 最新を採用（plEngine と同じロジック）
   const activeFixedByCode = new Map<string, number>()
+  const activeFixedValidFromByCode = new Map<string, string>()
   for (const f of activeFixed) {
-    activeFixedByCode.set(f.account_code, (activeFixedByCode.get(f.account_code) ?? 0) + f.amount)
+    const prev = activeFixedValidFromByCode.get(f.account_code)
+    if (!prev || f.valid_from > prev) {
+      activeFixedByCode.set(f.account_code, f.amount)
+      activeFixedValidFromByCode.set(f.account_code, f.valid_from)
+    }
   }
 
   // 月キー一覧（古→新）

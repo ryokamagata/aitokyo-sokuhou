@@ -152,10 +152,18 @@ export function computePLForecast(input: PLEngineInput): PLForecastResult {
     if (r.driver !== 'revenue') continue
     rateByCode.set(r.account_code, r.rate)
   }
+  // 同じ account_code に複数の有効レコード（例: '2026-03〜無期限' と '2026-04〜無期限'）
+  // が存在する場合は valid_from が最新のものを採用する（合算しない）。
+  // 古い「自動算出」が新しい「手動上書き」を二重計上で歪めるバグの修正。
   const fixedByCode = new Map<string, number>()
+  const fixedValidFromByCode = new Map<string, string>()
   for (const f of fixedCosts) {
     if (f.store !== null) continue
-    fixedByCode.set(f.account_code, (fixedByCode.get(f.account_code) ?? 0) + f.amount)
+    const prev = fixedValidFromByCode.get(f.account_code)
+    if (!prev || f.valid_from > prev) {
+      fixedByCode.set(f.account_code, f.amount)
+      fixedValidFromByCode.set(f.account_code, f.valid_from)
+    }
   }
 
   const lines: PLLine[] = []
