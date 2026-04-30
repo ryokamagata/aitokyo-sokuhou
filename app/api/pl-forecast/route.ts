@@ -69,7 +69,10 @@ export async function GET(req: Request) {
       .filter(s => !isClosedStore(s.name))
       .reduce((sum, s) => sum + s.seats * MAX_REVENUE_PER_SEAT, 0)
     const std = computeStandardForecast(fc, prevYearSales, avgYoYRate, totalRevenueCap)
-    revenueHint = std.standard
+    // ─── 税抜き化: 売上速報/BMの売上は税込み、原価は税抜きで計上されているため統一 ──
+    // 消費税率10% を前提に std.standard (税込) を税抜きに変換
+    const CONSUMPTION_TAX_RATE = 0.10
+    revenueHint = Math.round(std.standard / (1 + CONSUMPTION_TAX_RATE))
   }
 
   const forecast = isPastMonth

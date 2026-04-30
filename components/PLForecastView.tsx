@@ -203,9 +203,9 @@ export default function PLForecastView({ dataVersion = 0 }: { dataVersion?: numb
 
         <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 sm:gap-3">
           <Card
-            label="売上高（着地予測）"
+            label="売上高（着地予測・税抜）"
             value={formatYenCompact(f.revenue)}
-            sub={data.dataSource.revenueSource === 'pl_actual' ? 'シート確定値' : 'ダッシュボード着地予測と一致'}
+            sub={data.dataSource.revenueSource === 'pl_actual' ? 'シート確定値' : 'ダッシュボード着地予測 ÷ 1.10'}
           />
           <Card label="粗利" value={formatYenCompact(f.grossProfit)} sub={pct(f.revenue > 0 ? f.grossProfit / f.revenue : 0)} />
           <Card label="営業利益" value={formatYenCompact(f.operatingProfit)}
