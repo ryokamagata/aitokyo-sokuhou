@@ -898,6 +898,10 @@ function PersonnelAllocator({ year, month, onSaved, assumedRevenue }: { year: nu
   const [validTo, setValidTo] = useState<string>('')
   const [overrides, setOverrides] = useState<Record<string, string>>({})
   const [monthsBack, setMonthsBack] = useState<number>(6)
+  // 増員プリセット
+  const [headcountAdd, setHeadcountAdd] = useState<string>('20')
+  const [salaryPerHead, setSalaryPerHead] = useState<string>('220000')
+  const [includeSocialBenefit, setIncludeSocialBenefit] = useState<boolean>(true)
 
   const fetchData = useCallback(async () => {
     setLoading(true)
@@ -948,6 +952,56 @@ function PersonnelAllocator({ year, month, onSaved, assumedRevenue }: { year: nu
           ? '按分完了（デフォルト想定値の比率を使用 — 過去実績未取込のため）:'
           : '按分完了（過去実績比）:'
         setMsg(`${head}\n${lines.join('\n')}`)
+        await fetchData()
+        await onSaved()
+      }
+    } finally { setBusy(false) }
+  }
+
+  const applyPastPlusHeadcount = async () => {
+    if (!data) return
+    if (!validFrom) { setMsg('有効開始月を入力してください'); return }
+    const n = parseInt(headcountAdd.replace(/[,\s]/g, ''), 10)
+    const sal = parseFloat(salaryPerHead.replace(/[,¥\s]/g, ''))
+    if (!Number.isFinite(n) || n < 0) { setMsg('増員人数を入力してください'); return }
+    if (!Number.isFinite(sal) || sal < 0) { setMsg('月給を入力してください'); return }
+
+    const addSalary = n * sal
+    // 法定福利費の連動増（給与の約15% — 健康保険・厚生年金・雇用保険の事業主負担合計）
+    const addSocial = includeSocialBenefit ? Math.round(addSalary * 0.15) : 0
+
+    const allocations: { accountCode: string; amount: number }[] = data.breakdown.map(b => {
+      let amt = b.avg // 過去平均がベース
+      if (b.code === 'cogs_salon_salary' || b.code === 'sga_salary') {
+        // 給与系に増員分を加算（cogs_salon_salary がメイン）
+        if (b.code === 'cogs_salon_salary') amt += addSalary
+      }
+      if (b.code === 'cogs_social' && includeSocialBenefit) {
+        amt += addSocial
+      }
+      return { accountCode: b.code, amount: amt }
+    })
+
+    setBusy(true); setMsg(null)
+    try {
+      const res = await fetch('/api/pl-personnel-allocation', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          mode: 'set-individual',
+          validFrom, validTo: validTo || null, allocations,
+          note: `過去平均 + 正社員${n}人増(月給${(sal/10000).toFixed(0)}万)${includeSocialBenefit ? '・法定福利15%連動' : ''}`,
+        }),
+      })
+      const j = await res.json()
+      if (!res.ok || !j.ok) {
+        setMsg(`保存失敗: ${j.error ?? res.statusText}`)
+      } else {
+        const lines = allocations.map(a => {
+          const name = data.breakdown.find(b => b.code === a.accountCode)?.name ?? a.accountCode
+          return `${name}: ¥${a.amount.toLocaleString()}`
+        })
+        setMsg(`過去平均 + 増員調整で保存:\n${lines.join('\n')}\n合計 ¥${j.total.toLocaleString()}`)
         await fetchData()
         await onSaved()
       }
@@ -1046,6 +1100,43 @@ function PersonnelAllocator({ year, month, onSaved, assumedRevenue }: { year: nu
             <option value={12}>12ヶ月</option>
           </select>
         </label>
+      </div>
+
+      {/* プリセット: 過去実績ベース + 増員調整 */}
+      <div className="bg-emerald-900/20 rounded p-3 space-y-2 border border-emerald-700/40">
+        <div className="text-[11px] text-emerald-300 font-medium">🎯 過去実績ベース + 正社員増員調整（推奨）</div>
+        <p className="text-[10px] text-gray-400 leading-relaxed">
+          各科目を「過去{data.monthsBack}ヶ月の月平均」で初期化し、給与手当に「増員人数 × 月給」を加算します。
+          法定福利費は給与の15%（健保・厚年・雇保 事業主負担合計）で連動増。
+        </p>
+        <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
+          <label className="flex flex-col text-[11px] text-gray-400 gap-0.5">
+            <span>増員人数</span>
+            <input value={headcountAdd} onChange={e => setHeadcountAdd(e.target.value)} placeholder="20"
+                   inputMode="numeric"
+                   className="bg-gray-900 text-gray-100 text-xs rounded px-2 py-1.5 border border-gray-700" />
+          </label>
+          <label className="flex flex-col text-[11px] text-gray-400 gap-0.5">
+            <span>月給/人（円）</span>
+            <input value={salaryPerHead} onChange={e => setSalaryPerHead(e.target.value)} placeholder="220000"
+                   inputMode="numeric"
+                   className="bg-gray-900 text-gray-100 text-xs rounded px-2 py-1.5 border border-gray-700" />
+          </label>
+          <label className="flex items-center gap-1 text-[11px] text-gray-400 mt-4 sm:mt-5">
+            <input type="checkbox" checked={includeSocialBenefit}
+                   onChange={e => setIncludeSocialBenefit(e.target.checked)}
+                   className="accent-emerald-500" />
+            <span>法定福利15%連動</span>
+          </label>
+        </div>
+        <div className="text-[10px] text-gray-500">
+          増員分の試算: 給与+¥{(parseInt(headcountAdd || '0') * parseInt(salaryPerHead || '0')).toLocaleString()}
+          {includeSocialBenefit && ` / 法定福利+¥${Math.round(parseInt(headcountAdd || '0') * parseInt(salaryPerHead || '0') * 0.15).toLocaleString()}`}
+        </div>
+        <button onClick={applyPastPlusHeadcount} disabled={busy}
+                className="text-xs px-3 py-1.5 bg-emerald-600 hover:bg-emerald-500 disabled:bg-gray-700 text-white rounded-md font-medium">
+          過去平均 + 増員分で保存
+        </button>
       </div>
 
       {/* 総額按分フォーム */}
