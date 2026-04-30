@@ -318,6 +318,9 @@ export default function PLForecastView({ dataVersion = 0 }: { dataVersion?: numb
       {/* データソース（売上・コストの出処） */}
       <DataSourceCard ds={data.dataSource} year={data.year} month={data.month} />
 
+      {/* スタッフ別ルール計算（プロ38%/正社員30%/アシスタント22万） */}
+      <StaffSalaryEditor year={data.year} month={data.month} onSaved={refresh} />
+
       {/* 人件費の按分エディタ（過去実績比率で4500万を自動割振 + 手動調整） */}
       <PersonnelAllocator year={data.year} month={data.month} onSaved={refresh} assumedRevenue={f.revenue} />
 
@@ -855,6 +858,247 @@ function BreakEvenCard({
         )}
         {msg && <span className="text-[10px] text-gray-400">{msg}</span>}
       </div>
+    </div>
+  )
+}
+
+// ─── スタッフ別ルール給与計算エディタ ──────────────────────────
+type StaffSalaryRow = {
+  staff_name: string
+  type: 'pro' | 'fulltime' | 'assistant' | string
+  base_salary: number
+  rate: number
+  active: number
+  notes: string | null
+  avgMonthlySales: number
+  calculatedSalary: number
+  isNew: boolean
+}
+type StaffSalaryData = {
+  year: number; month: number; monthsBack: number
+  referenceMonths: number
+  rows: StaffSalaryRow[]
+  summary: {
+    totalStaff: number
+    countByType: { pro: number; fulltime: number; assistant: number }
+    salaryByType: { pro: number; fulltime: number; assistant: number }
+    grandTotal: number
+  }
+}
+
+function StaffSalaryEditor({ year, month, onSaved }: { year: number; month: number; onSaved: () => Promise<void> | void }) {
+  const [data, setData] = useState<StaffSalaryData | null>(null)
+  const [loading, setLoading] = useState(true)
+  const [busy, setBusy] = useState(false)
+  const [msg, setMsg] = useState<string | null>(null)
+  const [edits, setEdits] = useState<Record<string, Partial<StaffSalaryRow>>>({})
+  const [collapsed, setCollapsed] = useState(true)
+
+  const fetchData = useCallback(async () => {
+    setLoading(true)
+    try {
+      const res = await fetch(`/api/pl-staff-salary?year=${year}&month=${month}&monthsBack=3`, { cache: 'no-store' })
+      const j = await res.json()
+      setData(j)
+      setEdits({})
+    } finally { setLoading(false) }
+  }, [year, month])
+
+  useEffect(() => { fetchData() }, [fetchData])
+
+  const updateRow = (name: string, patch: Partial<StaffSalaryRow>) => {
+    setEdits(prev => ({ ...prev, [name]: { ...(prev[name] ?? {}), ...patch } }))
+  }
+
+  const merged = (r: StaffSalaryRow): StaffSalaryRow => {
+    const e = edits[r.staff_name]
+    if (!e) return r
+    return { ...r, ...e } as StaffSalaryRow
+  }
+
+  // プレビュー再計算
+  const recalcSalary = (r: StaffSalaryRow): number => {
+    if (!r.active) return 0
+    if (r.type === 'assistant') return r.base_salary || 220_000
+    if (r.type === 'pro') {
+      const byRate = r.avgMonthlySales * (r.rate || 0.38)
+      return Math.max(byRate, r.base_salary || 240_000)
+    }
+    if (r.type === 'fulltime') {
+      const byRate = r.avgMonthlySales * (r.rate || 0.30)
+      return Math.max(byRate, r.base_salary || 240_000)
+    }
+    return r.base_salary
+  }
+
+  const saveAndApply = async (apply: boolean) => {
+    if (!data) return
+    setBusy(true); setMsg(null)
+    try {
+      const staff = data.rows.map(r => {
+        const m = merged(r)
+        return {
+          staff_name: m.staff_name,
+          type: m.type,
+          base_salary: m.base_salary,
+          rate: m.rate,
+          active: m.active,
+        }
+      })
+      const body: { staff: typeof staff; applyMonth?: string } = { staff }
+      if (apply) body.applyMonth = `${year}-${String(month).padStart(2, '0')}`
+      const res = await fetch('/api/pl-staff-salary', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body),
+      })
+      const j = await res.json()
+      if (!res.ok || !j.ok) {
+        setMsg(`保存失敗: ${j.error ?? res.statusText}`)
+      } else {
+        if (j.applied) {
+          setMsg(`設定保存＋PL反映: プロ ¥${j.applied.sumByCode.cogs_professional.toLocaleString()} / 正社員+アシスタント ¥${j.applied.sumByCode.cogs_salon_salary.toLocaleString()}`)
+        } else {
+          setMsg(`${j.saved}件のスタッフ設定を保存しました`)
+        }
+        await fetchData()
+        if (apply) await onSaved()
+      }
+    } finally { setBusy(false) }
+  }
+
+  if (loading) return <div className="bg-gray-800 rounded-xl p-4 text-gray-400 text-xs">スタッフデータ読込中…</div>
+  if (!data) return null
+
+  // 編集後の集計プレビュー
+  const previewByType = { pro: 0, fulltime: 0, assistant: 0 }
+  let activeCount = 0
+  for (const r of data.rows) {
+    const m = merged(r)
+    const sal = recalcSalary(m)
+    if (m.active && (m.type === 'pro' || m.type === 'fulltime' || m.type === 'assistant')) {
+      previewByType[m.type as 'pro' | 'fulltime' | 'assistant'] += sal
+      activeCount++
+    }
+  }
+  const previewGrand = previewByType.pro + previewByType.fulltime + previewByType.assistant
+
+  return (
+    <div className="bg-gray-800 rounded-xl p-4 space-y-3">
+      <div className="flex items-center justify-between gap-2 flex-wrap">
+        <div>
+          <h2 className="text-sm font-medium text-gray-300">📋 スタッフ別ルール計算（経理推奨）</h2>
+          <p className="text-[11px] text-gray-500 leading-relaxed mt-1">
+            ルール: プロ契約 = max(売上×38%, ¥24万) / 正社員 = max(売上×30%, ¥24万) / アシスタント = ¥22万固定。
+            BMから自動取得した過去{data.referenceMonths}ヶ月の月平均売上で計算しています。
+          </p>
+        </div>
+        <button onClick={() => setCollapsed(!collapsed)}
+                className="text-[10px] px-2 py-1 bg-gray-700 hover:bg-gray-600 text-gray-300 rounded">
+          {collapsed ? '▼ 展開' : '▲ 折りたたみ'}
+        </button>
+      </div>
+
+      {/* 集計サマリ */}
+      <div className="grid grid-cols-3 sm:grid-cols-4 gap-2 text-[11px]">
+        <div className="bg-gray-900/40 rounded p-2">
+          <div className="text-gray-500">プロ契約</div>
+          <div className="text-gray-200 font-medium">{data.summary.countByType.pro}人 / ¥{Math.round(previewByType.pro).toLocaleString()}</div>
+        </div>
+        <div className="bg-gray-900/40 rounded p-2">
+          <div className="text-gray-500">正社員</div>
+          <div className="text-gray-200 font-medium">{data.summary.countByType.fulltime}人 / ¥{Math.round(previewByType.fulltime).toLocaleString()}</div>
+        </div>
+        <div className="bg-gray-900/40 rounded p-2">
+          <div className="text-gray-500">アシスタント</div>
+          <div className="text-gray-200 font-medium">{data.summary.countByType.assistant}人 / ¥{Math.round(previewByType.assistant).toLocaleString()}</div>
+        </div>
+        <div className="bg-blue-900/30 rounded p-2 border border-blue-700/40">
+          <div className="text-blue-300">合計人件費</div>
+          <div className="text-white font-bold">{activeCount}人 / ¥{Math.round(previewGrand).toLocaleString()}</div>
+        </div>
+      </div>
+
+      {/* スタッフ一覧テーブル */}
+      {!collapsed && (
+        <>
+          <div className="overflow-x-auto max-h-[600px] overflow-y-auto">
+            <table className="w-full text-[11px]">
+              <thead className="sticky top-0 bg-gray-800">
+                <tr className="text-gray-500 border-b border-gray-700">
+                  <th className="text-left py-1.5 pr-2">スタッフ</th>
+                  <th className="text-left py-1.5 pr-2">区分</th>
+                  <th className="text-right py-1.5 pr-2">月給ベース</th>
+                  <th className="text-right py-1.5 pr-2">歩合率</th>
+                  <th className="text-right py-1.5 pr-2">月平均売上</th>
+                  <th className="text-right py-1.5 pr-2">計算給与</th>
+                  <th className="text-center py-1.5 pr-2">有効</th>
+                </tr>
+              </thead>
+              <tbody>
+                {data.rows.map(r => {
+                  const m = merged(r)
+                  const sal = recalcSalary(m)
+                  return (
+                    <tr key={r.staff_name} className={`border-b border-gray-700/50 ${!m.active ? 'opacity-40' : ''}`}>
+                      <td className="py-1 pr-2 text-gray-300">
+                        {r.staff_name}
+                        {r.isNew && <span className="ml-1 text-[9px] px-1 bg-yellow-900/50 text-yellow-300 rounded">新</span>}
+                      </td>
+                      <td className="py-1 pr-2">
+                        <select value={m.type}
+                                onChange={e => updateRow(r.staff_name, { type: e.target.value as 'pro' | 'fulltime' | 'assistant' })}
+                                className="bg-gray-900 text-gray-100 text-[11px] rounded px-1 py-0.5 border border-gray-700">
+                          <option value="fulltime">正社員</option>
+                          <option value="pro">プロ契約</option>
+                          <option value="assistant">アシスタント</option>
+                        </select>
+                      </td>
+                      <td className="py-1 pr-2 text-right">
+                        <input type="number" value={m.base_salary}
+                               onChange={e => updateRow(r.staff_name, { base_salary: parseInt(e.target.value || '0', 10) })}
+                               className="bg-gray-900 text-gray-100 text-[11px] rounded px-1 py-0.5 border border-gray-700 w-24 text-right" />
+                      </td>
+                      <td className="py-1 pr-2 text-right">
+                        {m.type === 'assistant' ? (
+                          <span className="text-gray-600">—</span>
+                        ) : (
+                          <input type="number" step="0.01" value={m.rate}
+                                 onChange={e => updateRow(r.staff_name, { rate: parseFloat(e.target.value || '0') })}
+                                 className="bg-gray-900 text-gray-100 text-[11px] rounded px-1 py-0.5 border border-gray-700 w-16 text-right" />
+                        )}
+                      </td>
+                      <td className="py-1 pr-2 text-right text-gray-400">
+                        ¥{m.avgMonthlySales.toLocaleString()}
+                      </td>
+                      <td className="py-1 pr-2 text-right text-gray-200 font-medium">
+                        ¥{Math.round(sal).toLocaleString()}
+                      </td>
+                      <td className="py-1 pr-2 text-center">
+                        <input type="checkbox" checked={m.active === 1}
+                               onChange={e => updateRow(r.staff_name, { active: e.target.checked ? 1 : 0 })}
+                               className="accent-emerald-500" />
+                      </td>
+                    </tr>
+                  )
+                })}
+              </tbody>
+            </table>
+          </div>
+
+          <div className="flex items-center gap-2 flex-wrap">
+            <button onClick={() => saveAndApply(false)} disabled={busy}
+                    className="text-xs px-3 py-1.5 bg-gray-700 hover:bg-gray-600 disabled:bg-gray-800 text-gray-200 rounded-md">
+              設定だけ保存
+            </button>
+            <button onClick={() => saveAndApply(true)} disabled={busy}
+                    className="text-xs px-3 py-1.5 bg-emerald-600 hover:bg-emerald-500 disabled:bg-gray-700 text-white rounded-md font-medium">
+              保存して当月PLに反映
+            </button>
+            {msg && <span className="text-[11px] text-gray-300">{msg}</span>}
+          </div>
+        </>
+      )}
     </div>
   )
 }
