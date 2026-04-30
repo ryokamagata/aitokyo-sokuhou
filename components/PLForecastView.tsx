@@ -323,7 +323,7 @@ export default function PLForecastView({ dataVersion = 0 }: { dataVersion?: numb
       <DataSourceCard ds={data.dataSource} year={data.year} month={data.month} />
 
       {/* 人件費の按分エディタ（過去実績比率で4500万を自動割振 + 手動調整） */}
-      <PersonnelAllocator year={data.year} month={data.month} onSaved={refresh} />
+      <PersonnelAllocator year={data.year} month={data.month} onSaved={refresh} assumedRevenue={f.revenue} />
 
       {/* 固定費の手入力（新卒入社など PL に反映したい固定費を有効開始月とともに登録） */}
       <FixedCostEditor year={data.year} month={data.month} onSaved={refresh} />
@@ -748,6 +748,7 @@ type PersonnelBreakdownItem = {
   avg: number
   ratio: number
   currentFixed: number | null
+  defaultAmount: number
 }
 type PersonnelAllocationData = {
   year: number; month: number; monthsBack: number
@@ -758,9 +759,14 @@ type PersonnelAllocationData = {
   grandTotal: number
   avgMonthlyTotal: number
   currentFixedTotal: number
+  defaultTotal: number
+  effectiveTotal: number
+  effectiveByCode: { code: string; amount: number }[]
+  assumedRevenue: number
+  hasPastActuals: boolean
 }
 
-function PersonnelAllocator({ year, month, onSaved }: { year: number; month: number; onSaved: () => Promise<void> | void }) {
+function PersonnelAllocator({ year, month, onSaved, assumedRevenue }: { year: number; month: number; onSaved: () => Promise<void> | void; assumedRevenue: number }) {
   const [data, setData] = useState<PersonnelAllocationData | null>(null)
   const [loading, setLoading] = useState(true)
   const [busy, setBusy] = useState(false)
@@ -774,23 +780,23 @@ function PersonnelAllocator({ year, month, onSaved }: { year: number; month: num
   const fetchData = useCallback(async () => {
     setLoading(true)
     try {
-      const res = await fetch(`/api/pl-personnel-allocation?year=${year}&month=${month}&monthsBack=${monthsBack}`, { cache: 'no-store' })
+      const res = await fetch(`/api/pl-personnel-allocation?year=${year}&month=${month}&monthsBack=${monthsBack}&assumedRevenue=${assumedRevenue}`, { cache: 'no-store' })
       const j = await res.json()
       setData(j)
-      // 既定値: 既存 fixed があればそれ、無ければ過去平均
+      // 既定値: 既存 fixed があればそれ、無ければデフォルト想定値、それも無ければ過去平均
       const init: Record<string, string> = {}
       for (const b of j.breakdown ?? []) {
-        const v = b.currentFixed ?? b.avg
+        const v = b.currentFixed ?? b.defaultAmount ?? b.avg
         init[b.code] = v > 0 ? String(v) : ''
       }
       setOverrides(init)
-      // 総額の既定値: 現在固定費合計があればそれ、無ければ平均月額
-      const t = j.currentFixedTotal > 0 ? j.currentFixedTotal : j.avgMonthlyTotal
+      // 総額の既定値: 現在の effective（手動+デフォルト）
+      const t = j.effectiveTotal > 0 ? j.effectiveTotal : j.avgMonthlyTotal
       setTotalInput(t > 0 ? String(t) : '')
     } finally {
       setLoading(false)
     }
-  }, [year, month, monthsBack])
+  }, [year, month, monthsBack, assumedRevenue])
 
   useEffect(() => { fetchData() }, [fetchData])
 
@@ -805,7 +811,7 @@ function PersonnelAllocator({ year, month, onSaved }: { year: number; month: num
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           mode: 'allocate-by-ratio',
-          total, validFrom, validTo: validTo || null, monthsBack,
+          total, validFrom, validTo: validTo || null, monthsBack, assumedRevenue,
         }),
       })
       const j = await res.json()
@@ -816,7 +822,10 @@ function PersonnelAllocator({ year, month, onSaved }: { year: number; month: num
           const name = data?.breakdown.find(b => b.code === a.accountCode)?.name ?? a.accountCode
           return `${name}: ¥${a.amount.toLocaleString()} (${a.ratioPct}%)`
         })
-        setMsg(`按分完了:\n${lines.join('\n')}`)
+        const head = j.usedFallback
+          ? '按分完了（デフォルト想定値の比率を使用 — 過去実績未取込のため）:'
+          : '按分完了（過去実績比）:'
+        setMsg(`${head}\n${lines.join('\n')}`)
         await fetchData()
         await onSaved()
       }
@@ -872,20 +881,40 @@ function PersonnelAllocator({ year, month, onSaved }: { year: number; month: num
         </p>
       </div>
 
+      {/* 現状サマリ — 予測PLに反映されている人件費合計を最上段に */}
+      <div className="bg-blue-900/20 rounded p-3 text-[11px] border border-blue-700/30">
+        <div className="flex justify-between mb-1">
+          <span className="text-blue-300 font-medium">⚙ 現在予測PLに反映されている人件費合計</span>
+          <span className="text-white font-bold">¥{data.effectiveTotal.toLocaleString()}</span>
+        </div>
+        <p className="text-[10px] text-gray-400 leading-relaxed">
+          内訳: 手動固定費（保存済み ¥{data.currentFixedTotal.toLocaleString()}） + デフォルト想定値（未保存科目分 ¥{(data.effectiveTotal - data.currentFixedTotal).toLocaleString()}）。
+          <br />
+          ※ 「支払報酬料(プロ契約)」は既定で売上の22.9%（=売上1.5億想定で約3,400万）が人件費に含まれます。下記で総額を保存すれば、固定費として優先反映されこの変動率は無効化されます。
+        </p>
+      </div>
+
       {/* 過去実績サマリ */}
       <div className="bg-gray-900/40 rounded p-3 text-[11px] text-gray-400">
         <div className="flex justify-between mb-1">
-          <span>過去{data.monthsBack}ヶ月（{data.rangeStart}〜{data.rangeEnd}）人件費合計</span>
-          <span className="text-gray-200 font-medium">¥{data.grandTotal.toLocaleString()}</span>
+          <span>過去{data.monthsBack}ヶ月（{data.rangeStart}〜{data.rangeEnd}）人件費実績合計</span>
+          <span className={`font-medium ${data.hasPastActuals ? 'text-gray-200' : 'text-yellow-400'}`}>
+            ¥{data.grandTotal.toLocaleString()}{!data.hasPastActuals && ' （未取込）'}
+          </span>
         </div>
         <div className="flex justify-between">
-          <span>月平均</span>
+          <span>過去実績の月平均</span>
           <span className="text-gray-200 font-medium">¥{data.avgMonthlyTotal.toLocaleString()}</span>
         </div>
         <div className="flex justify-between">
-          <span>現在の手入力固定費合計（当月有効）</span>
-          <span className="text-gray-200 font-medium">¥{data.currentFixedTotal.toLocaleString()}</span>
+          <span>デフォルト想定の月額合計（売上1.5億時）</span>
+          <span className="text-gray-200 font-medium">¥{data.defaultTotal.toLocaleString()}</span>
         </div>
+        {!data.hasPastActuals && (
+          <p className="text-[10px] text-yellow-400/80 mt-1">
+            💡 過去実績が0円のため、按分はデフォルト想定値の比率で行います（先に「① 過去月の実績PLを取込」を実行すると実績比に切替）。
+          </p>
+        )}
         <label className="flex items-center gap-1 mt-1">
           <span>参照期間:</span>
           <select value={monthsBack} onChange={e => setMonthsBack(parseInt(e.target.value, 10))}
@@ -931,8 +960,8 @@ function PersonnelAllocator({ year, month, onSaved }: { year: number; month: num
             <tr className="text-gray-500 border-b border-gray-700">
               <th className="text-left py-1.5 pr-2">科目</th>
               <th className="text-right py-1.5 pr-2">過去平均/月</th>
-              <th className="text-right py-1.5 pr-2">過去比率</th>
-              <th className="text-right py-1.5 pr-2">現在固定費</th>
+              <th className="text-right py-1.5 pr-2">既定想定</th>
+              <th className="text-right py-1.5 pr-2">現在反映</th>
               <th className="text-right py-1.5 pr-2">設定金額（手動）</th>
             </tr>
           </thead>
@@ -940,6 +969,7 @@ function PersonnelAllocator({ year, month, onSaved }: { year: number; month: num
             {data.breakdown.map(b => {
               const overrideVal = overrides[b.code] ?? ''
               const isCogs = b.category === 'cogs'
+              const effective = data.effectiveByCode.find(e => e.code === b.code)?.amount ?? 0
               return (
                 <tr key={b.code} className="border-b border-gray-700/50">
                   <td className="py-1.5 pr-2 text-gray-300">
@@ -949,9 +979,12 @@ function PersonnelAllocator({ year, month, onSaved }: { year: number; month: num
                     {b.name}
                   </td>
                   <td className="py-1.5 pr-2 text-right text-gray-400">¥{b.avg.toLocaleString()}</td>
-                  <td className="py-1.5 pr-2 text-right text-gray-400">{(b.ratio * 100).toFixed(1)}%</td>
-                  <td className="py-1.5 pr-2 text-right text-gray-300">
-                    {b.currentFixed !== null ? `¥${b.currentFixed.toLocaleString()}` : '—'}
+                  <td className="py-1.5 pr-2 text-right text-gray-500">¥{b.defaultAmount.toLocaleString()}</td>
+                  <td className="py-1.5 pr-2 text-right text-gray-200">
+                    ¥{effective.toLocaleString()}
+                    {b.currentFixed === null && b.defaultAmount > 0 && (
+                      <span className="text-[9px] text-gray-500 ml-1">(既定)</span>
+                    )}
                   </td>
                   <td className="py-1.5 pr-2 text-right">
                     <input value={overrideVal}
@@ -968,8 +1001,8 @@ function PersonnelAllocator({ year, month, onSaved }: { year: number; month: num
             <tr className="text-gray-300 font-medium">
               <td className="py-1.5 pr-2">合計</td>
               <td className="py-1.5 pr-2 text-right">¥{data.avgMonthlyTotal.toLocaleString()}</td>
-              <td className="py-1.5 pr-2 text-right">100.0%</td>
-              <td className="py-1.5 pr-2 text-right">¥{data.currentFixedTotal.toLocaleString()}</td>
+              <td className="py-1.5 pr-2 text-right">¥{data.defaultTotal.toLocaleString()}</td>
+              <td className="py-1.5 pr-2 text-right">¥{data.effectiveTotal.toLocaleString()}</td>
               <td className="py-1.5 pr-2 text-right">¥{Math.round(overrideTotal).toLocaleString()}</td>
             </tr>
           </tfoot>

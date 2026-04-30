@@ -40,16 +40,21 @@ export async function GET(req: Request) {
   let revenueHint = 0
   let salesConfidence: 'low' | 'medium' | 'high' = 'low'
   if (!isPastMonth) {
+    // ─── ダッシュボード(/api/sales) と完全に同じ dailySales を作る ──
+    // cutoffDate = 締め時刻を超えるまで前日まで。これを越えるデータは除外。
+    const cutoffDate = `${year}-${pad(month)}-${String(Math.max(today, 0)).padStart(2, '0')}`
     const scraped = getScrapedDailySales(year, month)
-    const dailySales: DailySales[] = scraped.map(r => ({
-      date: r.date,
-      dayOfWeek: new Date(r.date + 'T00:00:00').getDay(),
-      totalAmount: r.sales,
-      customers: r.customers,
-      newCustomers: r.new_customers,
-      stores: {},
-      staff: {},
-    }))
+    const dailySales: DailySales[] = scraped
+      .filter(r => today > 0 && r.date <= cutoffDate)
+      .map(r => ({
+        date: r.date,
+        dayOfWeek: new Date(r.date + 'T00:00:00').getDay(),
+        totalAmount: r.sales,
+        customers: r.customers,
+        newCustomers: r.new_customers,
+        stores: {},
+        staff: {},
+      }))
     const fc = computeForecast(dailySales, year, month, today)
     salesConfidence = fc.confidence
 
