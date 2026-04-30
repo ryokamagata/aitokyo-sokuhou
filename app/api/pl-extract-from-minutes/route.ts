@@ -33,11 +33,14 @@ function getNotion() {
   return _notion
 }
 
-const DEFAULT_KEYWORDS = ['人件費', '給与', '正社員', 'アシスタント', '新卒']
+const DEFAULT_KEYWORDS = ['人件費', '給与', '正社員', 'アシスタント', '新卒', '役員報酬', '法定福利']
 
 export async function POST(req: Request) {
   if (!process.env.NOTION_TOKEN) {
-    return NextResponse.json({ ok: false, error: 'NOTION_TOKEN is not configured' }, { status: 500 })
+    return NextResponse.json({
+      ok: false,
+      error: 'NOTION_TOKENが設定されていません。Vercelの環境変数にNotion統合のシークレットトークンを設定してください。',
+    }, { status: 500 })
   }
   const body = await req.json().catch(() => ({}))
   const keywords: string[] = Array.isArray(body.keywords) && body.keywords.length > 0
@@ -53,6 +56,9 @@ export async function POST(req: Request) {
   // ── 1. キーワード検索 ──────────────────────────────────
   type Hit = { id: string; title: string; url: string; lastEditedTime: string }
   const hitMap = new Map<string, Hit>()
+  const searchErrors: { keyword: string; message: string }[] = []
+  let totalSearchHits = 0
+  let beforeCutoff = 0
   for (const kw of keywords) {
     try {
       const res = await notion.search({
@@ -61,13 +67,17 @@ export async function POST(req: Request) {
         sort: { direction: 'descending', timestamp: 'last_edited_time' },
         page_size: 30,
       })
+      totalSearchHits += res.results.length
       for (const p of res.results) {
         const pp = p as {
           id: string; url?: string; last_edited_time?: string
           properties?: Record<string, { title?: { plain_text?: string }[] }>
         }
         const lastEdited = pp.last_edited_time ?? ''
-        if (lastEdited && new Date(lastEdited).getTime() < cutoffMs) continue
+        if (lastEdited && new Date(lastEdited).getTime() < cutoffMs) {
+          beforeCutoff++
+          continue
+        }
         if (hitMap.has(pp.id)) continue
         const titleProp = pp.properties ? Object.values(pp.properties).find(v => Array.isArray(v.title)) : undefined
         const title = titleProp?.title?.[0]?.plain_text ?? '(無題)'
@@ -75,7 +85,7 @@ export async function POST(req: Request) {
         if (hitMap.size >= maxPages) break
       }
     } catch (e) {
-      // 1キーワード失敗しても他で続行
+      searchErrors.push({ keyword: kw, message: e instanceof Error ? e.message : String(e) })
       continue
     }
     if (hitMap.size >= maxPages) break
@@ -87,11 +97,16 @@ export async function POST(req: Request) {
 
   // ── 2. 各ページの本文を取得して抽出 ─────────────────────
   const pages: ExtractedPage[] = []
+  const fetchErrors: { title: string; message: string }[] = []
+  let pagesWithoutCandidates = 0
   for (const h of hits) {
     try {
       const text = await fetchPageText(notion, h.id)
       const candidates = extractPersonnelCandidates(text)
-      if (candidates.length === 0) continue
+      if (candidates.length === 0) {
+        pagesWithoutCandidates++
+        continue
+      }
       pages.push({
         pageId: h.id,
         title: h.title,
@@ -99,8 +114,27 @@ export async function POST(req: Request) {
         lastEdited: h.lastEditedTime,
         candidates,
       })
-    } catch {
+    } catch (e) {
+      fetchErrors.push({ title: h.title, message: e instanceof Error ? e.message : String(e) })
       continue
+    }
+  }
+
+  const totalCandidates = pages.reduce((s, p) => s + p.candidates.length, 0)
+
+  // 全件0なら、なぜ0なのかを切り分けるヒントを返す
+  let diagnosticHint: string | null = null
+  if (totalCandidates === 0) {
+    if (totalSearchHits === 0 && searchErrors.length === keywords.length) {
+      diagnosticHint = 'Notion APIの検索すべてが失敗しました。NOTION_TOKEN の権限・有効性を確認してください。'
+    } else if (totalSearchHits === 0) {
+      diagnosticHint = `キーワード [${keywords.join('・')}] で1件もヒットしませんでした。Notion統合がワークスペースに招待されているか、または各議事録ページに統合が共有されているかを確認してください（ページ右上「共有」→ 統合を追加）。`
+    } else if (hits.length === 0) {
+      diagnosticHint = `${totalSearchHits}件ヒットしましたが、すべて${daysBack}日より古いページでした。daysBackを伸ばすか、最近の議事録に上記キーワードが入っているか確認してください。`
+    } else if (pagesWithoutCandidates === hits.length) {
+      diagnosticHint = `${hits.length}件のページを取得しましたが、人件費系の金額表現（"○○万円"・"22万×19人"・"4,500,000円"等）が同一文中にありませんでした。議事録での記述形式を確認してください。`
+    } else {
+      diagnosticHint = `本文取得に${fetchErrors.length}件失敗しました（権限不足の可能性）。`
     }
   }
 
@@ -110,7 +144,16 @@ export async function POST(req: Request) {
     daysBack,
     pagesScanned: hits.length,
     pages,
-    totalCandidates: pages.reduce((s, p) => s + p.candidates.length, 0),
+    totalCandidates,
+    diagnostics: {
+      totalSearchHits,
+      uniquePagesAfterCutoff: hits.length,
+      beforeCutoff,
+      pagesWithoutCandidates,
+      searchErrors,
+      fetchErrors,
+      hint: diagnosticHint,
+    },
   })
 }
 
