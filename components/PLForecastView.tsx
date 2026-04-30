@@ -201,7 +201,11 @@ export default function PLForecastView({ dataVersion = 0 }: { dataVersion?: numb
         </div>
 
         <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 sm:gap-3">
-          <Card label="売上高" value={formatYenCompact(f.revenue)} />
+          <Card
+            label="売上高（着地予測）"
+            value={formatYenCompact(f.revenue)}
+            sub={data.dataSource.revenueSource === 'pl_actual' ? 'シート確定値' : 'ダッシュボード着地予測と一致'}
+          />
           <Card label="粗利" value={formatYenCompact(f.grossProfit)} sub={pct(f.revenue > 0 ? f.grossProfit / f.revenue : 0)} />
           <Card label="営業利益" value={formatYenCompact(f.operatingProfit)}
                 valueColor={f.operatingProfit >= 0 ? 'text-white' : 'text-red-400'} />
@@ -317,6 +321,9 @@ export default function PLForecastView({ dataVersion = 0 }: { dataVersion?: numb
 
       {/* データソース（売上・コストの出処） */}
       <DataSourceCard ds={data.dataSource} year={data.year} month={data.month} />
+
+      {/* 人件費の按分エディタ（過去実績比率で4500万を自動割振 + 手動調整） */}
+      <PersonnelAllocator year={data.year} month={data.month} onSaved={refresh} />
 
       {/* 固定費の手入力（新卒入社など PL に反映したい固定費を有効開始月とともに登録） */}
       <FixedCostEditor year={data.year} month={data.month} onSaved={refresh} />
@@ -566,7 +573,17 @@ function FixedCostEditor({ year, month, onSaved }: { year: number; month: number
         setExtractedPages([])
       } else {
         setExtractedPages(j.pages ?? [])
-        setExtractMsg(`${j.pagesScanned}件のページから ${j.totalCandidates}件の候補を抽出（直近${j.daysBack}日）`)
+        let msg = `${j.pagesScanned}件のページから ${j.totalCandidates}件の候補を抽出（直近${j.daysBack}日）`
+        if (j.totalCandidates === 0 && j.diagnostics?.hint) {
+          msg += `\n💡 ${j.diagnostics.hint}`
+        }
+        if (j.diagnostics?.searchErrors?.length > 0) {
+          msg += `\n⚠ 検索エラー: ${j.diagnostics.searchErrors.map((e: { keyword: string; message: string }) => `[${e.keyword}] ${e.message}`).join(' / ')}`
+        }
+        if (j.diagnostics?.fetchErrors?.length > 0) {
+          msg += `\n⚠ 本文取得エラー: ${j.diagnostics.fetchErrors.length}件（${j.diagnostics.fetchErrors.slice(0, 2).map((e: { title: string; message: string }) => e.title).join(', ')}…）`
+        }
+        setExtractMsg(msg)
       }
     } catch (e) {
       setExtractMsg(`通信エラー: ${e instanceof Error ? e.message : String(e)}`)
@@ -716,6 +733,256 @@ function FixedCostEditor({ year, month, onSaved }: { year: number; month: number
           </div>
         </div>
       )}
+    </div>
+  )
+}
+
+// ─── 人件費の按分エディタ ────────────────────────────────────
+type PersonnelBreakdownItem = {
+  code: string
+  name: string
+  category: string
+  subcategory: string
+  monthly: number[]
+  total: number
+  avg: number
+  ratio: number
+  currentFixed: number | null
+}
+type PersonnelAllocationData = {
+  year: number; month: number; monthsBack: number
+  rangeStart: string; rangeEnd: string
+  monthKeys: string[]
+  breakdown: PersonnelBreakdownItem[]
+  monthTotals: { month: string; total: number }[]
+  grandTotal: number
+  avgMonthlyTotal: number
+  currentFixedTotal: number
+}
+
+function PersonnelAllocator({ year, month, onSaved }: { year: number; month: number; onSaved: () => Promise<void> | void }) {
+  const [data, setData] = useState<PersonnelAllocationData | null>(null)
+  const [loading, setLoading] = useState(true)
+  const [busy, setBusy] = useState(false)
+  const [msg, setMsg] = useState<string | null>(null)
+  const [totalInput, setTotalInput] = useState<string>('')
+  const [validFrom, setValidFrom] = useState<string>(`${year}-${String(month).padStart(2, '0')}`)
+  const [validTo, setValidTo] = useState<string>('')
+  const [overrides, setOverrides] = useState<Record<string, string>>({})
+  const [monthsBack, setMonthsBack] = useState<number>(6)
+
+  const fetchData = useCallback(async () => {
+    setLoading(true)
+    try {
+      const res = await fetch(`/api/pl-personnel-allocation?year=${year}&month=${month}&monthsBack=${monthsBack}`, { cache: 'no-store' })
+      const j = await res.json()
+      setData(j)
+      // 既定値: 既存 fixed があればそれ、無ければ過去平均
+      const init: Record<string, string> = {}
+      for (const b of j.breakdown ?? []) {
+        const v = b.currentFixed ?? b.avg
+        init[b.code] = v > 0 ? String(v) : ''
+      }
+      setOverrides(init)
+      // 総額の既定値: 現在固定費合計があればそれ、無ければ平均月額
+      const t = j.currentFixedTotal > 0 ? j.currentFixedTotal : j.avgMonthlyTotal
+      setTotalInput(t > 0 ? String(t) : '')
+    } finally {
+      setLoading(false)
+    }
+  }, [year, month, monthsBack])
+
+  useEffect(() => { fetchData() }, [fetchData])
+
+  const allocateByRatio = async () => {
+    const total = parseFloat(totalInput.replace(/[,¥\s]/g, ''))
+    if (!Number.isFinite(total) || total < 0) { setMsg('総額を入力してください'); return }
+    if (!validFrom) { setMsg('有効開始月を入力してください'); return }
+    setBusy(true); setMsg(null)
+    try {
+      const res = await fetch('/api/pl-personnel-allocation', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          mode: 'allocate-by-ratio',
+          total, validFrom, validTo: validTo || null, monthsBack,
+        }),
+      })
+      const j = await res.json()
+      if (!res.ok || !j.ok) {
+        setMsg(`按分失敗: ${j.error ?? res.statusText}`)
+      } else {
+        const lines = j.allocations.map((a: { accountCode: string; amount: number; ratioPct: number }) => {
+          const name = data?.breakdown.find(b => b.code === a.accountCode)?.name ?? a.accountCode
+          return `${name}: ¥${a.amount.toLocaleString()} (${a.ratioPct}%)`
+        })
+        setMsg(`按分完了:\n${lines.join('\n')}`)
+        await fetchData()
+        await onSaved()
+      }
+    } finally { setBusy(false) }
+  }
+
+  const saveIndividual = async () => {
+    if (!validFrom) { setMsg('有効開始月を入力してください'); return }
+    const allocations: { accountCode: string; amount: number }[] = []
+    for (const [code, val] of Object.entries(overrides)) {
+      const v = parseFloat((val ?? '').replace(/[,¥\s]/g, ''))
+      if (!Number.isFinite(v) || v < 0) continue
+      allocations.push({ accountCode: code, amount: v })
+    }
+    if (allocations.length === 0) { setMsg('保存する金額がありません'); return }
+    setBusy(true); setMsg(null)
+    try {
+      const res = await fetch('/api/pl-personnel-allocation', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          mode: 'set-individual',
+          validFrom, validTo: validTo || null, allocations,
+        }),
+      })
+      const j = await res.json()
+      if (!res.ok || !j.ok) {
+        setMsg(`保存失敗: ${j.error ?? res.statusText}`)
+      } else {
+        setMsg(`${j.saved}件の科目を保存しました（合計 ¥${j.total.toLocaleString()}）`)
+        await fetchData()
+        await onSaved()
+      }
+    } finally { setBusy(false) }
+  }
+
+  const overrideTotal = Object.values(overrides).reduce((s, v) => {
+    const n = parseFloat((v ?? '').replace(/[,¥\s]/g, ''))
+    return s + (Number.isFinite(n) ? n : 0)
+  }, 0)
+
+  if (loading) return <div className="bg-gray-800 rounded-xl p-4 text-gray-400 text-xs">人件費データ読込中…</div>
+  if (!data) return null
+
+  return (
+    <div className="bg-gray-800 rounded-xl p-4 space-y-3">
+      <div>
+        <h2 className="text-sm font-medium text-gray-300">人件費の按分（過去実績ベース ＋ 手動調整）</h2>
+        <p className="text-[11px] text-gray-500 leading-relaxed mt-1">
+          対象科目: 旅費交通費(通勤手当) / 給与手当(サロン社員) / 法定福利費 / 支払報酬料(プロ契約) ＋ 役員報酬・給料賃金・福利厚生費。
+          総額を入力して「過去実績比で按分」を押すと、{data.rangeStart}〜{data.rangeEnd}（{data.monthsBack}ヶ月）の実績比率で各科目に自動配分します。
+          下の表で個別に上書きすることも可能。
+        </p>
+      </div>
+
+      {/* 過去実績サマリ */}
+      <div className="bg-gray-900/40 rounded p-3 text-[11px] text-gray-400">
+        <div className="flex justify-between mb-1">
+          <span>過去{data.monthsBack}ヶ月（{data.rangeStart}〜{data.rangeEnd}）人件費合計</span>
+          <span className="text-gray-200 font-medium">¥{data.grandTotal.toLocaleString()}</span>
+        </div>
+        <div className="flex justify-between">
+          <span>月平均</span>
+          <span className="text-gray-200 font-medium">¥{data.avgMonthlyTotal.toLocaleString()}</span>
+        </div>
+        <div className="flex justify-between">
+          <span>現在の手入力固定費合計（当月有効）</span>
+          <span className="text-gray-200 font-medium">¥{data.currentFixedTotal.toLocaleString()}</span>
+        </div>
+        <label className="flex items-center gap-1 mt-1">
+          <span>参照期間:</span>
+          <select value={monthsBack} onChange={e => setMonthsBack(parseInt(e.target.value, 10))}
+                  className="bg-gray-900 text-gray-100 text-[11px] rounded px-1.5 py-0.5 border border-gray-700">
+            <option value={3}>3ヶ月</option>
+            <option value={6}>6ヶ月</option>
+            <option value={12}>12ヶ月</option>
+          </select>
+        </label>
+      </div>
+
+      {/* 総額按分フォーム */}
+      <div className="bg-gray-900/40 rounded p-3 space-y-2 border border-gray-700/50">
+        <div className="text-[11px] text-gray-300 font-medium">⚖ 総額を過去実績比で按分</div>
+        <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
+          <label className="flex flex-col text-[11px] text-gray-400 gap-0.5">
+            <span>人件費総額（円）</span>
+            <input value={totalInput} onChange={e => setTotalInput(e.target.value)} placeholder="例: 45000000"
+                   inputMode="numeric"
+                   className="bg-gray-900 text-gray-100 text-xs rounded px-2 py-1.5 border border-gray-700" />
+          </label>
+          <label className="flex flex-col text-[11px] text-gray-400 gap-0.5">
+            <span>有効開始月（YYYY-MM）</span>
+            <input value={validFrom} onChange={e => setValidFrom(e.target.value)} placeholder="2026-04"
+                   className="bg-gray-900 text-gray-100 text-xs rounded px-2 py-1.5 border border-gray-700" />
+          </label>
+          <label className="flex flex-col text-[11px] text-gray-400 gap-0.5">
+            <span>有効終了月（任意）</span>
+            <input value={validTo} onChange={e => setValidTo(e.target.value)} placeholder="2027-03"
+                   className="bg-gray-900 text-gray-100 text-xs rounded px-2 py-1.5 border border-gray-700" />
+          </label>
+        </div>
+        <button onClick={allocateByRatio} disabled={busy}
+                className="text-xs px-3 py-1.5 bg-purple-600 hover:bg-purple-500 disabled:bg-gray-700 text-white rounded-md font-medium">
+          過去実績比で按分して保存
+        </button>
+      </div>
+
+      {/* 科目別の表 */}
+      <div className="overflow-x-auto">
+        <table className="w-full text-[11px]">
+          <thead>
+            <tr className="text-gray-500 border-b border-gray-700">
+              <th className="text-left py-1.5 pr-2">科目</th>
+              <th className="text-right py-1.5 pr-2">過去平均/月</th>
+              <th className="text-right py-1.5 pr-2">過去比率</th>
+              <th className="text-right py-1.5 pr-2">現在固定費</th>
+              <th className="text-right py-1.5 pr-2">設定金額（手動）</th>
+            </tr>
+          </thead>
+          <tbody>
+            {data.breakdown.map(b => {
+              const overrideVal = overrides[b.code] ?? ''
+              const isCogs = b.category === 'cogs'
+              return (
+                <tr key={b.code} className="border-b border-gray-700/50">
+                  <td className="py-1.5 pr-2 text-gray-300">
+                    <span className={`text-[9px] px-1 py-0.5 rounded mr-1 ${isCogs ? 'bg-orange-900/50 text-orange-300' : 'bg-blue-900/50 text-blue-300'}`}>
+                      {isCogs ? '原価' : '販管'}
+                    </span>
+                    {b.name}
+                  </td>
+                  <td className="py-1.5 pr-2 text-right text-gray-400">¥{b.avg.toLocaleString()}</td>
+                  <td className="py-1.5 pr-2 text-right text-gray-400">{(b.ratio * 100).toFixed(1)}%</td>
+                  <td className="py-1.5 pr-2 text-right text-gray-300">
+                    {b.currentFixed !== null ? `¥${b.currentFixed.toLocaleString()}` : '—'}
+                  </td>
+                  <td className="py-1.5 pr-2 text-right">
+                    <input value={overrideVal}
+                           onChange={e => setOverrides(prev => ({ ...prev, [b.code]: e.target.value }))}
+                           placeholder="0"
+                           inputMode="numeric"
+                           className="bg-gray-900 text-gray-100 text-[11px] rounded px-1.5 py-0.5 border border-gray-700 w-28 text-right" />
+                  </td>
+                </tr>
+              )
+            })}
+          </tbody>
+          <tfoot>
+            <tr className="text-gray-300 font-medium">
+              <td className="py-1.5 pr-2">合計</td>
+              <td className="py-1.5 pr-2 text-right">¥{data.avgMonthlyTotal.toLocaleString()}</td>
+              <td className="py-1.5 pr-2 text-right">100.0%</td>
+              <td className="py-1.5 pr-2 text-right">¥{data.currentFixedTotal.toLocaleString()}</td>
+              <td className="py-1.5 pr-2 text-right">¥{Math.round(overrideTotal).toLocaleString()}</td>
+            </tr>
+          </tfoot>
+        </table>
+      </div>
+
+      <div className="flex items-center gap-2 flex-wrap">
+        <button onClick={saveIndividual} disabled={busy}
+                className="text-xs px-3 py-1.5 bg-emerald-600 hover:bg-emerald-500 disabled:bg-gray-700 text-white rounded-md font-medium">
+          手動の設定金額を保存
+        </button>
+        {msg && <span className="text-[11px] text-gray-300 whitespace-pre-wrap">{msg}</span>}
+      </div>
     </div>
   )
 }
