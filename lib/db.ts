@@ -185,6 +185,7 @@ function runMigrations(db: Database.Database) {
       type TEXT NOT NULL DEFAULT 'fulltime',  -- 'pro' | 'fulltime' | 'assistant'
       base_salary INTEGER NOT NULL DEFAULT 240000,
       rate REAL NOT NULL DEFAULT 0.30,
+      position_allowance INTEGER NOT NULL DEFAULT 0,
       active INTEGER NOT NULL DEFAULT 1,
       notes TEXT,
       updated_at TEXT NOT NULL DEFAULT (datetime('now'))
@@ -259,6 +260,12 @@ function runMigrations(db: Database.Database) {
   const caCols = db.prepare("PRAGMA table_info(cost_accounts)").all() as { name: string }[]
   if (!caCols.some(c => c.name === 'subcategory')) {
     db.exec('ALTER TABLE cost_accounts ADD COLUMN subcategory TEXT')
+  }
+
+  // staff_master に position_allowance カラム追加（既存DB対応）
+  const smCols = db.prepare("PRAGMA table_info(staff_master)").all() as { name: string }[]
+  if (smCols.length > 0 && !smCols.some(c => c.name === 'position_allowance')) {
+    db.exec("ALTER TABLE staff_master ADD COLUMN position_allowance INTEGER NOT NULL DEFAULT 0")
   }
 
   // 科目マスタをAI TOKYO 実シート構造に合わせてシード
@@ -1220,6 +1227,7 @@ export type StaffMaster = {
   type: 'pro' | 'fulltime' | 'assistant'
   base_salary: number
   rate: number
+  position_allowance: number
   active: number
   notes: string | null
 }
@@ -1227,24 +1235,26 @@ export type StaffMaster = {
 export function getAllStaffMaster(): StaffMaster[] {
   const db = getDB()
   return db.prepare(
-    'SELECT id, staff_name, type, base_salary, rate, active, notes FROM staff_master ORDER BY staff_name ASC'
+    'SELECT id, staff_name, type, base_salary, rate, position_allowance, active, notes FROM staff_master ORDER BY staff_name ASC'
   ).all() as StaffMaster[]
 }
 
-export function upsertStaffMaster(rows: { staff_name: string; type: string; base_salary: number; rate: number; active?: number; notes?: string | null }[]): void {
+export function upsertStaffMaster(rows: { staff_name: string; type: string; base_salary: number; rate: number; position_allowance?: number; active?: number; notes?: string | null }[]): void {
   const db = getDB()
   const stmt = db.prepare(`
-    INSERT INTO staff_master(staff_name, type, base_salary, rate, active, notes, updated_at)
-    VALUES(@staff_name, @type, @base_salary, @rate, @active, @notes, datetime('now'))
+    INSERT INTO staff_master(staff_name, type, base_salary, rate, position_allowance, active, notes, updated_at)
+    VALUES(@staff_name, @type, @base_salary, @rate, @position_allowance, @active, @notes, datetime('now'))
     ON CONFLICT(staff_name) DO UPDATE SET
       type=excluded.type, base_salary=excluded.base_salary,
-      rate=excluded.rate, active=excluded.active, notes=excluded.notes,
+      rate=excluded.rate, position_allowance=excluded.position_allowance,
+      active=excluded.active, notes=excluded.notes,
       updated_at=datetime('now')
   `)
   db.transaction(() => {
     for (const r of rows) stmt.run({
       staff_name: r.staff_name, type: r.type,
       base_salary: Math.round(r.base_salary), rate: r.rate,
+      position_allowance: Math.round(r.position_allowance ?? 0),
       active: r.active ?? 1, notes: r.notes ?? null,
     })
   })()
