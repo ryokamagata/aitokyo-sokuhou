@@ -54,6 +54,10 @@ export type PLForecastResult = {
   lines: PLLine[]
   coverage: { actual: number; variable: number; fixed: number; default: number; empty: number }
   breakEvenRevenue: number  // 損益分岐点売上高
+  // 損益分岐点の計算根拠
+  variableCost: number       // 変動費（売上連動コスト）
+  fixedCost: number          // 固定費（売上非連動コスト）
+  variableCostRate: number   // 変動費率（=変動費/売上）
 }
 
 export function detectStage(targetYear: number, targetMonth: number, todayIsoDate: string): PLStage {
@@ -265,12 +269,27 @@ function aggregate(
   const sgaOther = sum(l => l.category === 'sga' && l.subcategory === 'other')
 
   // 損益分岐点売上高 = 固定費 / (1 - 変動費率)
-  // cogs のうち material と professional 的な変動費部分を仮定。より厳密には subcategory 別だが MVP は簡易計算
-  const variableCost = lines
-    .filter(l => l.source === 'variable' || l.source === 'default' && (DEFAULT_VARIABLE_RATES[l.code] !== undefined))
-    .reduce((s, l) => s + l.amount, 0)
+  // 業界実態に合わせた分類:
+  //   変動費 = subcategory='material' のうち真に売上連動する科目 (材料費・薬剤・消耗品・支払手数料カード)
+  //   固定費 = それ以外 (人件費・家賃・水光熱・広告・通信・その他販管費 ＋ 賃借料・通勤手当などの定額系)
+  // 重要: 「人件費」(subcategory='personnel') は cogs_professional を含めて常に固定費扱い。
+  //       美容業界のプロ契約報酬は売上連動だが、経営上は人件費として固定費的に管理するため。
+  const isVariableLine = (l: PLLine): boolean => {
+    // 人件費は常に固定費
+    if (l.subcategory === 'personnel') return false
+    // 家賃・リース、水道光熱、広告宣伝（採用含む）、家賃的な固定支出は固定費
+    if (l.subcategory === 'rent' || l.subcategory === 'utility' || l.subcategory === 'promo') return false
+    // sga_banking はカード手数料 (売上連動)
+    if (l.code === 'sga_banking') return true
+    // それ以外の material 科目で、デフォルトで変動率が定義されているもののみ変動費
+    if (l.subcategory === 'material' && DEFAULT_VARIABLE_RATES[l.code] !== undefined) return true
+    // 手動で variable rate が設定されている科目は変動費
+    if (l.source === 'variable') return true
+    return false
+  }
+  const variableCost = lines.filter(isVariableLine).reduce((s, l) => s + l.amount, 0)
   const fixedCost = (cogs + sga) - variableCost
-  const varRate = revenue > 0 ? variableCost / revenue : 0.3
+  const varRate = revenue > 0 ? variableCost / revenue : 0
   const breakEvenRevenue = varRate < 1 ? Math.round(fixedCost / (1 - varRate)) : 0
 
   return {
@@ -282,6 +301,9 @@ function aggregate(
     lines,
     coverage,
     breakEvenRevenue,
+    variableCost,
+    fixedCost,
+    variableCostRate: varRate,
   }
 }
 
