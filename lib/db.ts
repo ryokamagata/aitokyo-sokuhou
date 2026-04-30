@@ -1239,6 +1239,14 @@ export function getAllStaffMaster(): StaffMaster[] {
   ).all() as StaffMaster[]
 }
 
+export function deleteStaffMasterByNames(names: string[]): number {
+  if (names.length === 0) return 0
+  const db = getDB()
+  const placeholders = names.map(() => '?').join(',')
+  const result = db.prepare(`DELETE FROM staff_master WHERE staff_name IN (${placeholders})`).run(...names)
+  return result.changes
+}
+
 export function upsertStaffMaster(rows: { staff_name: string; type: string; base_salary: number; rate: number; position_allowance?: number; active?: number; notes?: string | null }[]): void {
   const db = getDB()
   const stmt = db.prepare(`
