@@ -1,5 +1,6 @@
 import { NextResponse } from 'next/server'
 import { getCostAccounts, getRecentCostActuals, getFixedCosts, upsertFixedCost, type CostAccount } from '@/lib/db'
+import { DEFAULT_FIXED_COSTS, DEFAULT_VARIABLE_RATES } from '@/lib/plEngine'
 
 export const dynamic = 'force-dynamic'
 
@@ -31,6 +32,25 @@ function monthsAgo(year: number, month: number, n: number): { year: number; mont
 
 function isPersonnel(acc: CostAccount): boolean {
   return acc.subcategory === 'personnel' && (acc.category === 'cogs' || acc.category === 'sga')
+}
+
+/**
+ * 過去実績がゼロのときにフォールバックとして使う、各人件費科目の想定月額。
+ * lib/plEngine.ts の DEFAULT_FIXED_COSTS と DEFAULT_VARIABLE_RATES から組み立てる。
+ * 変動費率系（cogs_professional 等）は assumedRevenue × 率 で固定額化。
+ */
+function defaultPersonnelAmounts(accounts: CostAccount[], assumedRevenue: number): Map<string, number> {
+  const out = new Map<string, number>()
+  for (const acc of accounts) {
+    if (DEFAULT_FIXED_COSTS[acc.code] !== undefined) {
+      out.set(acc.code, DEFAULT_FIXED_COSTS[acc.code])
+    } else if (DEFAULT_VARIABLE_RATES[acc.code] !== undefined) {
+      out.set(acc.code, Math.round(assumedRevenue * DEFAULT_VARIABLE_RATES[acc.code]))
+    } else {
+      out.set(acc.code, 0)
+    }
+  }
+  return out
 }
 
 export async function GET(req: Request) {
@@ -78,6 +98,10 @@ export async function GET(req: Request) {
   // 全期間の人件費合計
   const grandTotal = [...monthTotals.values()].reduce((s, v) => s + v, 0)
 
+  // デフォルト想定値（売上1.5億想定）— 過去実績ゼロ時の参考に
+  const assumedRevenue = parseInt(url.searchParams.get('assumedRevenue') ?? '150000000', 10)
+  const defaults = defaultPersonnelAmounts(accounts, assumedRevenue)
+
   // 科目ごとの平均月額・全期間合計・比率（人件費合計に対する）
   const breakdown = accounts.map(acc => {
     const m = byCodeMonth.get(acc.code) ?? new Map<string, number>()
@@ -96,11 +120,20 @@ export async function GET(req: Request) {
       avg,
       ratio,
       currentFixed: activeFixedByCode.get(acc.code) ?? null,
+      defaultAmount: defaults.get(acc.code) ?? 0,
     }
   })
 
   // 現在の人件費合計（手動固定費＋デフォルト想定）
   const currentTotal = breakdown.reduce((s, b) => s + (b.currentFixed ?? 0), 0)
+  // デフォルト想定での人件費合計（過去実績がゼロのときの参考）
+  const defaultTotal = breakdown.reduce((s, b) => s + b.defaultAmount, 0)
+  // 「現在予測PLに実際に乗る額」: 手動固定費があればそれ、無ければデフォルト想定値
+  const effectiveByCode = breakdown.map(b => ({
+    code: b.code,
+    amount: b.currentFixed ?? b.defaultAmount,
+  }))
+  const effectiveTotal = effectiveByCode.reduce((s, e) => s + e.amount, 0)
 
   return NextResponse.json({
     year, month, monthsBack,
@@ -112,6 +145,11 @@ export async function GET(req: Request) {
     grandTotal,
     avgMonthlyTotal: monthKeys.length > 0 ? Math.round(grandTotal / monthKeys.length) : 0,
     currentFixedTotal: currentTotal,
+    defaultTotal,
+    effectiveTotal,
+    effectiveByCode,
+    assumedRevenue,
+    hasPastActuals: grandTotal > 0,
   })
 }
 
@@ -122,6 +160,7 @@ export async function POST(req: Request) {
     validFrom?: string
     validTo?: string | null
     monthsBack?: number
+    assumedRevenue?: number
     allocations?: { accountCode: string; amount: number }[]
     note?: string | null
   }
@@ -154,6 +193,8 @@ export async function POST(req: Request) {
       return NextResponse.json({ ok: false, error: 'total must be a non-negative number' }, { status: 400 })
     }
     const monthsBack = Math.max(1, Math.min(24, body.monthsBack ?? 6))
+    const assumedRevenue = typeof body.assumedRevenue === 'number' && body.assumedRevenue > 0
+      ? body.assumedRevenue : 150_000_000 // 月次想定売上1.5億をデフォルト
 
     // 比率を算出（対象月: 当該validFromの前月から monthsBack ヶ月遡る）
     const [yStr, mStr] = validFromN.split('-')
@@ -169,13 +210,23 @@ export async function POST(req: Request) {
       if (!accountSet.has(a.account_code)) continue
       totalsByCode.set(a.account_code, (totalsByCode.get(a.account_code) ?? 0) + a.amount)
     }
-    const grand = [...totalsByCode.values()].reduce((s, v) => s + v, 0)
+    let grand = [...totalsByCode.values()].reduce((s, v) => s + v, 0)
+    let usedFallback = false
 
     if (grand === 0) {
-      return NextResponse.json({
-        ok: false,
-        error: '過去実績が0円のため按分できません。先に「① Googleシートから過去月の実績PLを取込」を実行してください。',
-      }, { status: 400 })
+      // フォールバック: lib/plEngine.ts のデフォルト固定費・変動率比率を使う
+      const defaults = defaultPersonnelAmounts(accounts, assumedRevenue)
+      for (const [code, v] of defaults) {
+        if (v > 0) totalsByCode.set(code, v)
+      }
+      grand = [...totalsByCode.values()].reduce((s, v) => s + v, 0)
+      usedFallback = true
+      if (grand === 0) {
+        return NextResponse.json({
+          ok: false,
+          error: '按分の元になる比率が算出できませんでした（過去実績もデフォルト値も無し）',
+        }, { status: 400 })
+      }
     }
 
     // 比率で按分。端数は最後の科目で吸収（最大の科目に丸め誤差を寄せる）。
@@ -196,7 +247,8 @@ export async function POST(req: Request) {
     }
 
     for (const r of rows) {
-      const memo = note ?? `按分(過去${monthsBack}ヶ月実績比 ${(r.ratio * 100).toFixed(1)}%)`
+      const sourceLabel = usedFallback ? `デフォルト想定値の比率 ${(r.ratio * 100).toFixed(1)}%` : `過去${monthsBack}ヶ月実績比 ${(r.ratio * 100).toFixed(1)}%`
+      const memo = note ?? `按分(${sourceLabel})`
       upsertFixedCost(r.accountCode, null, validFromN, validToN, r.amount, memo)
     }
 
@@ -206,6 +258,7 @@ export async function POST(req: Request) {
       total,
       validFrom: validFromN,
       validTo: validToN,
+      usedFallback,
       allocations: rows.map(r => ({
         accountCode: r.accountCode,
         amount: r.amount,

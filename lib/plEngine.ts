@@ -82,7 +82,7 @@ export function stageConfidence(stage: PLStage, salesConfidence: 'low' | 'medium
 
 // AI TOKYO 実績（2025/09-2026/03）から算出したデフォルト値
 // 変動費率（売上比）
-const DEFAULT_VARIABLE_RATES: Record<string, number> = {
+export const DEFAULT_VARIABLE_RATES: Record<string, number> = {
   cogs_purchase:      0.009,  // 仕入高
   cogs_drugs:         0.052,  // 材料費（薬剤）
   cogs_professional:  0.229,  // プロ契約給与（業務委託美容師）
@@ -91,7 +91,7 @@ const DEFAULT_VARIABLE_RATES: Record<string, number> = {
 }
 
 // 固定費デフォルト（月次平均、円）
-const DEFAULT_FIXED_COSTS: Record<string, number> = {
+export const DEFAULT_FIXED_COSTS: Record<string, number> = {
   cogs_salon_salary:  19_700_000, // サロン正社員給与
   cogs_social:         2_400_000, // 法定福利費
   cogs_commute:          745_000, // 通勤手当
