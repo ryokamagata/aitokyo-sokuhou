@@ -86,17 +86,33 @@ export async function GET(req: Request) {
     currentRevenueExcl = Math.round(std.standard / (1 + TAX_RATE))
   }
 
-  // 将来月予測のための税抜ベース売上（直近3ヶ月の cost_actuals_monthly 売上平均）
-  // 将来月の売上が無い場合は当月予測を使う
-  const recentPastForFuture: number[] = []
+  // 将来月予測の元データ:
+  //   1) YoY 成長率: 当年既完了月の vs 前年同月の平均成長率（季節性を一定とした成長補正）
+  //   2) 前年同月の税込売上 (daily_sales 由来): seasonality を反映した売上ベース
+  //   この2つで「前年同月 × (1 + YoY)」を将来月の売上とする。
+  //   前年同月が取れない場合は直近3ヶ月の税抜平均にフォールバック。
+  const fyCurrYearMonthly = getMonthlyTotalSales(curY, 1, curY, 12)
+  const fyPrevYearMonthly = getMonthlyTotalSales(curY - 1, 1, curY - 1, 12)
+  const fyYoYRate = computeAverageYoYRate(curY, curM, fyCurrYearMonthly, fyPrevYearMonthly) ?? 0
+
+  const recentPastExclList: number[] = []
   for (const slot of monthSlots) {
     if (!slot.isPast) continue
     const pl = buildActualPL(slot.year, slot.month)
-    if (pl.revenue > 0) recentPastForFuture.push(pl.revenue)
+    if (pl.revenue > 0) recentPastExclList.push(pl.revenue)
   }
-  const last3Avg = recentPastForFuture.length > 0
-    ? Math.round(recentPastForFuture.slice(-3).reduce((s, v) => s + v, 0) / Math.min(3, recentPastForFuture.length))
+  const last3AvgExcl = recentPastExclList.length > 0
+    ? Math.round(recentPastExclList.slice(-3).reduce((s, v) => s + v, 0) / Math.min(3, recentPastExclList.length))
     : currentRevenueExcl
+
+  function forecastFutureRevenueExcl(year: number, month: number): number {
+    const prev = getMonthlyTotalSales(year - 1, month, year - 1, month)
+    if (prev.length > 0 && prev[0].sales > 0) {
+      const projectedIncl = Math.round(prev[0].sales * (1 + fyYoYRate))
+      return Math.round(projectedIncl / (1 + TAX_RATE))
+    }
+    return last3AvgExcl
+  }
 
   type MonthEntry = {
     year: number
@@ -152,8 +168,8 @@ export async function GET(req: Request) {
       })
       source = 'sales_forecast'
     } else {
-      // 将来月: 直近3ヶ月平均（税抜）で予測
-      revenueExcl = last3Avg
+      // 将来月: 前年同月 × YoY 成長率（季節性を反映）でベース売上を作り、コストは予測ロジック
+      revenueExcl = forecastFutureRevenueExcl(slot.year, slot.month)
       pl = computePLForecast({
         year: slot.year, month: slot.month,
         todayIsoDate,
@@ -194,5 +210,10 @@ export async function GET(req: Request) {
     taxRate: TAX_RATE,
     months,
     totals: { ...totals, opMargin: totalsOpMargin },
+    forecastBase: {
+      yoyRate: fyYoYRate,                            // 当年既完了月の平均YoY成長率
+      method: 'prev_year_same_month_x_yoy',          // 将来月予測ロジック識別子
+      fallbackLast3AvgExcl: last3AvgExcl,            // 前年同月が取れない月のフォールバック値
+    },
   })
 }
