@@ -244,6 +244,14 @@ export async function GET() {
         }))
       const hasEnoughCurrentMonthData = dailySalesForForecast.length >= 3 && (currentMonthActual?.sales ?? 0) > 0
 
+      // 月初で当月のBM日数が不足している時のフォールバック計算用
+      // 前月実績 × (当月の季節変動率 / 前月の季節変動率) をベースに使う
+      const prevMonthInYear = toMonth === 1 ? 12 : toMonth - 1
+      const prevMonthDataInYear = toMonth === 1 ? prevYearData.get(12) : currentYearData.get(prevMonthInYear)
+      const seasonalIndexEarly = getSeasonalIndex(toYear)
+      const currentMonthSeasonalRatioEarly = seasonalIndexEarly[toMonth] ?? 1.0
+      const prevMonthSeasonalRatio = seasonalIndexEarly[prevMonthInYear] ?? 1.0
+
       if (hasEnoughCurrentMonthData) {
         const fc = computeForecast(dailySalesForForecast, toYear, toMonth, today)
         currentMonthEstimate = fc.forecastTotal
@@ -251,8 +259,14 @@ export async function GET() {
         const daysElapsed = Math.max(today, 1)
         const cutoffCustomers = dailySalesForForecast.reduce((s, d) => s + d.customers, 0)
         currentMonthCustEstimate = Math.round((cutoffCustomers / daysElapsed) * daysInCurrentMonth)
+      } else if (prevMonthDataInYear && prevMonthDataInYear.sales > 0 && prevMonthSeasonalRatio > 0) {
+        // 月初で日数不足 → 前月実績 × (当月の季節変動率 / 前月の季節変動率)
+        // YoYより前月の流れを汲んだ予測の方がモチベーションが上がる、という鎌形さん要望
+        const seasonalAdjust = currentMonthSeasonalRatioEarly / prevMonthSeasonalRatio
+        currentMonthEstimate = Math.round(prevMonthDataInYear.sales * seasonalAdjust)
+        currentMonthCustEstimate = Math.round(prevMonthDataInYear.customers * seasonalAdjust)
       } else if (prevYearCurrentMonthData) {
-        // 当月データ不足 → 前年同月 × YoYフォールバック
+        // 前月実績も無ければ前年同月×YoY にフォールバック
         currentMonthEstimate = avgGrowthRate !== null
           ? Math.round(prevYearCurrentMonthData.sales * (1 + avgGrowthRate))
           : prevYearCurrentMonthData.sales
