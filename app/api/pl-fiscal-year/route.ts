@@ -10,18 +10,19 @@ export const dynamic = 'force-dynamic'
 export const revalidate = 0
 
 const TAX_RATE = 0.10
-const FISCAL_START_MONTH = 9 // AI TOKYO は 9 月期
 
 function pad(n: number): string { return String(n).padStart(2, '0') }
 
 /**
- * 9月期 12ヶ月分の PL を一括取得する
+ * 12ヶ月分の PL を一括取得する。
  *   - 過去月: cost_actuals_monthly から実績ベースで構築（buildActualPL）
  *   - 当月  : ダッシュボードの売上着地予測 ÷ 1.10（税抜）+ コスト予測
- *   - 将来月: 過去3ヶ月の平均売上（税抜）を用いた予測
+ *   - 将来月: 前年同月 × YoY 成長率 で売上を予測 + コスト予測
  *
- * GET /api/pl-fiscal-year?year=YYYY  (fiscal start year, 例: 2025 = 2025年9月〜2026年8月期)
- *   year を省略すると現在の会計年度を返す
+ * GET /api/pl-fiscal-year
+ *   ?year=YYYY        対象年（カレンダー年。省略時は今年）
+ *   ?startMonth=N     開始月。省略時は 1（カレンダー年の1月〜12月）
+ *                     例: startMonth=9 で「9月期」（9月〜翌年8月）として表示
  */
 export async function GET(req: Request) {
   const url = new URL(req.url)
@@ -34,15 +35,21 @@ export async function GET(req: Request) {
   const today = (hour > CUTOFF_HOUR || (hour === CUTOFF_HOUR && minute >= CUTOFF_MINUTE)) ? calendarToday : calendarToday - 1
   const todayIsoDate = `${curY}-${pad(curM)}-${pad(calendarToday)}`
 
-  const defaultFiscalStartYear = curM >= FISCAL_START_MONTH ? curY : curY - 1
-  const fiscalStartYear = parseInt(url.searchParams.get('year') ?? String(defaultFiscalStartYear), 10)
+  // デフォルトはカレンダー年（1月〜12月）。
+  // 9月期で見たい場合は ?startMonth=9 を付与。
+  const startMonth = Math.max(1, Math.min(12, parseInt(url.searchParams.get('startMonth') ?? '1', 10)))
+  const targetYear = parseInt(url.searchParams.get('year') ?? (
+    startMonth === 1
+      ? String(curY)
+      : (curM >= startMonth ? String(curY) : String(curY - 1))
+  ), 10)
 
-  // 12ヶ月のリスト（9月から翌年8月）
+  // 12ヶ月のリスト
   const monthSlots: { year: number; month: number; isPast: boolean; isCurrent: boolean; isFuture: boolean }[] = []
   for (let i = 0; i < 12; i++) {
-    const m0 = (FISCAL_START_MONTH - 1 + i) % 12
+    const m0 = (startMonth - 1 + i) % 12
     const month = m0 + 1
-    const year = fiscalStartYear + (i + FISCAL_START_MONTH > 12 ? 1 : 0)
+    const year = targetYear + (i + startMonth > 12 ? 1 : 0)
     const ord = year * 12 + month
     const curOrd = curY * 12 + curM
     monthSlots.push({
@@ -205,9 +212,16 @@ export async function GET(req: Request) {
 
   const totalsOpMargin = totals.revenueExcl > 0 ? totals.operatingProfit / totals.revenueExcl : 0
 
+  // 期間ラベル（カレンダー年か任意startMonthか）
+  const lastSlot = monthSlots[monthSlots.length - 1]
+  const fiscalLabel = startMonth === 1
+    ? `${targetYear}年（1月〜12月）`
+    : `${targetYear}年${startMonth}月〜${lastSlot.year}年${lastSlot.month}月期`
+
   return NextResponse.json({
-    fiscalStartYear,
-    fiscalLabel: `${fiscalStartYear}年9月〜${fiscalStartYear + 1}年8月期`,
+    fiscalStartYear: targetYear,
+    startMonth,
+    fiscalLabel,
     taxRate: TAX_RATE,
     months,
     totals: { ...totals, opMargin: totalsOpMargin },

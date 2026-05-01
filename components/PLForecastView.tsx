@@ -1552,12 +1552,18 @@ type FiscalMonth = {
 
 type FiscalYearResponse = {
   fiscalStartYear: number
+  startMonth?: number
   fiscalLabel: string
   taxRate: number
   months: FiscalMonth[]
   totals: {
     revenueIncl: number; revenueExcl: number; cogs: number; sga: number
     grossProfit: number; operatingProfit: number; opMargin: number
+  }
+  forecastBase?: {
+    yoyRate: number
+    method: string
+    fallbackLast3AvgExcl: number
   }
 }
 
@@ -1597,7 +1603,7 @@ function FiscalYearTable({ dataVersion = 0 }: { dataVersion?: number }) {
         </div>
       </div>
       <p className="text-[10px] text-gray-500">
-        過去月: 確定PL（cost_actuals_monthly）／ 当月: BMスクレイプ着地予測 ÷ 1.10 ／ 将来月: 直近3ヶ月平均（税抜）で見込み計算
+        過去月: 確定PL or BM日次合計（PL未取込時） ／ 当月: ダッシュボード着地予測 ÷ 1.10 ／ 将来月: 前年同月 × YoY ({((data.forecastBase?.yoyRate ?? 0) * 100).toFixed(1)}%)
       </p>
 
       <div className="overflow-x-auto -mx-4 px-4">
