@@ -1561,9 +1561,11 @@ type FiscalYearResponse = {
     grossProfit: number; operatingProfit: number; opMargin: number
   }
   forecastBase?: {
-    yoyRate: number
     method: string
-    fallbackLast3AvgExcl: number
+    currentMonthEstimateIncl?: number
+    baselineMonthlyIncl?: number
+    currentMonthSeasonalRatio?: number
+    hasEnoughCurrentData?: boolean
   }
 }
 
@@ -1603,7 +1605,7 @@ function FiscalYearTable({ dataVersion = 0 }: { dataVersion?: number }) {
         </div>
       </div>
       <p className="text-[10px] text-gray-500">
-        過去月: 確定PL or BM日次合計（PL未取込時） ／ 当月: ダッシュボード着地予測 ÷ 1.10 ／ 将来月: 前年同月 × YoY ({((data.forecastBase?.yoyRate ?? 0) * 100).toFixed(1)}%)
+        過去月: 確定PL or BM日次合計（PL未取込時） ／ 当月: BM着地予測（または前月実績×季節率）／ 将来月: 当月ベースライン × 季節変動率 — 過去実績タブの月別売上と一致
       </p>
 
       <div className="overflow-x-auto -mx-4 px-4">
