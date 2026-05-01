@@ -1,9 +1,8 @@
 import { NextResponse } from 'next/server'
-import { getScrapedDailySales, getMonthlyTotalSales } from '@/lib/db'
-import { computeForecast, computeStandardForecast, computeAverageYoYRate } from '@/lib/forecastEngine'
+import { getScrapedDailySales, getMonthlyTotalSales, getSeasonalIndex } from '@/lib/db'
+import { computeForecast } from '@/lib/forecastEngine'
 import { computePLForecast, buildActualPL, type PLForecastResult } from '@/lib/plEngine'
 import { CUTOFF_HOUR, CUTOFF_MINUTE } from '@/lib/autoScrape'
-import { STORES, MAX_REVENUE_PER_SEAT, isClosedStore } from '@/lib/stores'
 import type { DailySales } from '@/lib/types'
 
 export const dynamic = 'force-dynamic'
@@ -60,65 +59,69 @@ export async function GET(req: Request) {
     })
   }
 
-  // 当月の売上着地予測（税抜）を1度だけ計算（既存ロジックと同じ）
-  let currentRevenueExcl = 0
-  let currentRevenueIncl = 0
+  // 売上の予測ロジックを /api/history と統一する:
+  //   - 当月着地予測 (税込):
+  //       BM日数 >= 3日   → forecastEngine の forecastTotal を採用
+  //       BM日数不足      → 前月実績(税込) × (当月の季節変動率 / 前月の季節変動率)
+  //   - 将来月（税込）:
+  //       baselineMonthly × seasonalIndex[mo]
+  //       baselineMonthly = currentMonthEstimateIncl / currentMonthSeasonalRatio
+  //   - 全て税込で計算し、最後に ÷1.10 で税抜にする
+  //
+  // これで /api/history の monthDetails と /api/pl-fiscal-year の月別売上が
+  // 同じ数字になる（鎌形さん要望: 通期PLと過去実績タブで売上を一致させたい）。
+  const seasonalIndex = getSeasonalIndex(curY)
+  const currentMonthSeasonalRatio = seasonalIndex[curM] ?? 1.0
+  const prevMonthInYear = curM === 1 ? 12 : curM - 1
+  const prevMonthYearVal = curM === 1 ? curY - 1 : curY
+  const prevMonthSales = getMonthlyTotalSales(prevMonthYearVal, prevMonthInYear, prevMonthYearVal, prevMonthInYear)
+  const prevMonthSeasonalRatio = seasonalIndex[prevMonthInYear] ?? 1.0
+  const prevYearCurrMonthSales = getMonthlyTotalSales(curY - 1, curM, curY - 1, curM)
+
+  // 当月のBM日次データ
+  const cutoffDate = `${curY}-${pad(curM)}-${String(Math.max(today, 0)).padStart(2, '0')}`
+  const scraped = getScrapedDailySales(curY, curM)
+  const currentMonthDailySales: DailySales[] = scraped
+    .filter(r => today > 0 && r.date <= cutoffDate)
+    .map(r => ({
+      date: r.date,
+      dayOfWeek: new Date(r.date + 'T00:00:00').getDay(),
+      totalAmount: r.sales,
+      customers: r.customers,
+      newCustomers: r.new_customers,
+      stores: {},
+      staff: {},
+    }))
+  const hasEnoughCurrentData = currentMonthDailySales.length >= 3
+
+  let currentMonthEstimateIncl = 0
   let currentSalesConfidence: 'low' | 'medium' | 'high' = 'low'
-  {
-    const cutoffDate = `${curY}-${pad(curM)}-${String(Math.max(today, 0)).padStart(2, '0')}`
-    const scraped = getScrapedDailySales(curY, curM)
-    const dailySales: DailySales[] = scraped
-      .filter(r => today > 0 && r.date <= cutoffDate)
-      .map(r => ({
-        date: r.date,
-        dayOfWeek: new Date(r.date + 'T00:00:00').getDay(),
-        totalAmount: r.sales,
-        customers: r.customers,
-        newCustomers: r.new_customers,
-        stores: {},
-        staff: {},
-      }))
-    const fc = computeForecast(dailySales, curY, curM, today)
+  if (hasEnoughCurrentData) {
+    const fc = computeForecast(currentMonthDailySales, curY, curM, today)
+    currentMonthEstimateIncl = fc.forecastTotal
     currentSalesConfidence = fc.confidence
-    const prevYearMonthly = getMonthlyTotalSales(curY - 1, curM, curY - 1, curM)
-    const prevYearSales = prevYearMonthly.length > 0 ? prevYearMonthly[0].sales : null
-    const currentYearMonthly = curM > 1 ? getMonthlyTotalSales(curY, 1, curY, curM - 1) : []
-    const prevYearAllMonths = curM > 1 ? getMonthlyTotalSales(curY - 1, 1, curY - 1, 12) : []
-    const avgYoYRate = computeAverageYoYRate(curY, curM, currentYearMonthly, prevYearAllMonths)
-    const totalRevenueCap = STORES
-      .filter(s => !isClosedStore(s.name))
-      .reduce((sum, s) => sum + s.seats * MAX_REVENUE_PER_SEAT, 0)
-    const std = computeStandardForecast(fc, prevYearSales, avgYoYRate, totalRevenueCap)
-    currentRevenueIncl = std.standard
-    currentRevenueExcl = Math.round(std.standard / (1 + TAX_RATE))
+  } else if (prevMonthSales.length > 0 && prevMonthSales[0].sales > 0 && prevMonthSeasonalRatio > 0) {
+    // 月初フォールバック: 前月実績 × 季節変動率の比
+    currentMonthEstimateIncl = Math.round(prevMonthSales[0].sales * (currentMonthSeasonalRatio / prevMonthSeasonalRatio))
+  } else if (prevYearCurrMonthSales.length > 0) {
+    currentMonthEstimateIncl = prevYearCurrMonthSales[0].sales
   }
 
-  // 将来月予測の元データ:
-  //   1) YoY 成長率: 当年既完了月の vs 前年同月の平均成長率（季節性を一定とした成長補正）
-  //   2) 前年同月の税込売上 (daily_sales 由来): seasonality を反映した売上ベース
-  //   この2つで「前年同月 × (1 + YoY)」を将来月の売上とする。
-  //   前年同月が取れない場合は直近3ヶ月の税抜平均にフォールバック。
-  const fyCurrYearMonthly = getMonthlyTotalSales(curY, 1, curY, 12)
-  const fyPrevYearMonthly = getMonthlyTotalSales(curY - 1, 1, curY - 1, 12)
-  const fyYoYRate = computeAverageYoYRate(curY, curM, fyCurrYearMonthly, fyPrevYearMonthly) ?? 0
+  const currentRevenueIncl = currentMonthEstimateIncl
+  const currentRevenueExcl = Math.round(currentMonthEstimateIncl / (1 + TAX_RATE))
 
-  const recentPastExclList: number[] = []
-  for (const slot of monthSlots) {
-    if (!slot.isPast) continue
-    const pl = buildActualPL(slot.year, slot.month)
-    if (pl.revenue > 0) recentPastExclList.push(pl.revenue)
-  }
-  const last3AvgExcl = recentPastExclList.length > 0
-    ? Math.round(recentPastExclList.slice(-3).reduce((s, v) => s + v, 0) / Math.min(3, recentPastExclList.length))
-    : currentRevenueExcl
+  // 将来月予測のベースライン（税込・平均月相当）
+  const baselineMonthlyIncl = currentMonthEstimateIncl > 0 && currentMonthSeasonalRatio > 0
+    ? currentMonthEstimateIncl / currentMonthSeasonalRatio
+    : 0
 
-  function forecastFutureRevenueExcl(year: number, month: number): number {
-    const prev = getMonthlyTotalSales(year - 1, month, year - 1, month)
-    if (prev.length > 0 && prev[0].sales > 0) {
-      const projectedIncl = Math.round(prev[0].sales * (1 + fyYoYRate))
+  function forecastFutureRevenueExcl(_year: number, month: number): number {
+    const moRatio = seasonalIndex[month] ?? 1.0
+    if (baselineMonthlyIncl > 0) {
+      const projectedIncl = Math.round(baselineMonthlyIncl * moRatio)
       return Math.round(projectedIncl / (1 + TAX_RATE))
     }
-    return last3AvgExcl
+    return currentRevenueExcl
   }
 
   type MonthEntry = {
@@ -226,9 +229,11 @@ export async function GET(req: Request) {
     months,
     totals: { ...totals, opMargin: totalsOpMargin },
     forecastBase: {
-      yoyRate: fyYoYRate,                            // 当年既完了月の平均YoY成長率
-      method: 'prev_year_same_month_x_yoy',          // 将来月予測ロジック識別子
-      fallbackLast3AvgExcl: last3AvgExcl,            // 前年同月が取れない月のフォールバック値
+      method: 'baseline_x_seasonal_index',           // 当月着地予測 / 季節変動率 をベースに各月へ展開
+      currentMonthEstimateIncl: currentRevenueIncl,  // 当月着地予測（税込）
+      baselineMonthlyIncl: Math.round(baselineMonthlyIncl), // 平均月相当の売上（税込）
+      currentMonthSeasonalRatio,                     // 当月の季節変動率（vs 平均月）
+      hasEnoughCurrentData,                          // BM日数 >= 3 で実測ベース、false なら前月×季節率
     },
   })
 }
