@@ -75,9 +75,26 @@ export async function GET(req: Request) {
     revenueHint = Math.round(std.standard / (1 + CONSUMPTION_TAX_RATE))
   }
 
-  const forecast = isPastMonth
-    ? buildActualPL(year, month)
-    : computePLForecast({ year, month, todayIsoDate, revenue: revenueHint, salesConfidence })
+  // 過去月の判定:
+  //   - cost_actuals_monthly に売上＋コスト実績があれば「実績PL」を使う
+  //   - 売上だけ（daily_sales 由来）の場合、computePLForecast でコスト推定
+  //     buildActualPL のままだと cogs=0 sga=0 になり営業利益=売上 になるため
+  let forecast
+  if (isPastMonth) {
+    const candidate = buildActualPL(year, month)
+    const hasRealCosts = candidate.coverage.actual > 1
+    if (hasRealCosts) {
+      forecast = candidate
+    } else {
+      forecast = computePLForecast({
+        year, month, todayIsoDate,
+        revenue: candidate.revenue,
+        salesConfidence: 'high',
+      })
+    }
+  } else {
+    forecast = computePLForecast({ year, month, todayIsoDate, revenue: revenueHint, salesConfidence })
+  }
 
   // 過去6ヶ月分の確定PL推移（cogs + sga のみ、non_op は除外）
   const trendStart = normalizeYM(year, month - 6)
@@ -139,7 +156,7 @@ export async function GET(req: Request) {
       source: plImport.source,                    // 'gsheet_confirmed' | 'gsheet_preview' | etc
     },
     revenueSource: isPastMonth
-      ? 'pl_actual'
+      ? (plImport.hasRevenue ? 'pl_actual' : 'sales_forecast')
       : (plImport.hasRevenue ? 'pl_actual' : 'sales_forecast'),
     overrides: {
       fixedCostCount: fixedCosts.filter(f => f.store === null).length,
