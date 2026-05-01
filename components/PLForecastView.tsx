@@ -202,10 +202,9 @@ export default function PLForecastView({ dataVersion = 0 }: { dataVersion?: numb
         </div>
 
         <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 sm:gap-3">
-          <Card
-            label="売上高（着地予測・税抜）"
-            value={formatYenCompact(f.revenue)}
-            sub={data.dataSource.revenueSource === 'pl_actual' ? 'シート確定値' : 'ダッシュボード着地予測 ÷ 1.10'}
+          <RevenueCard
+            revenueExcl={f.revenue}
+            sourceLabel={data.dataSource.revenueSource === 'pl_actual' ? 'シート確定値' : 'ダッシュボード着地予測'}
           />
           <Card label="粗利" value={formatYenCompact(f.grossProfit)} sub={pct(f.revenue > 0 ? f.grossProfit / f.revenue : 0)} />
           <Card label="営業利益" value={formatYenCompact(f.operatingProfit)}
@@ -243,6 +242,9 @@ export default function PLForecastView({ dataVersion = 0 }: { dataVersion?: numb
           </p>
         </div>
       </div>
+
+      {/* 通期PL（9月期12ヶ月の実績＋予測） */}
+      <FiscalYearTable />
 
       {/* 取込/シード */}
       <div className="bg-gray-800 rounded-xl p-4 space-y-3">
@@ -1531,12 +1533,142 @@ function SubcatBlock({ label, lines, total }: { label: string; lines: PLLine[]; 
   )
 }
 
+type FiscalMonth = {
+  year: number
+  month: number
+  isPast: boolean
+  isCurrent: boolean
+  isFuture: boolean
+  revenueIncl: number
+  revenueExcl: number
+  cogs: number
+  sga: number
+  grossProfit: number
+  operatingProfit: number
+  opMargin: number
+  source: 'pl_actual' | 'sales_forecast' | 'trend_forecast'
+  confidence: 'low' | 'medium' | 'high' | 'final'
+}
+
+type FiscalYearResponse = {
+  fiscalStartYear: number
+  fiscalLabel: string
+  taxRate: number
+  months: FiscalMonth[]
+  totals: {
+    revenueIncl: number; revenueExcl: number; cogs: number; sga: number
+    grossProfit: number; operatingProfit: number; opMargin: number
+  }
+}
+
+const SOURCE_TAG: Record<FiscalMonth['source'], { label: string; cls: string }> = {
+  pl_actual:       { label: '実績', cls: 'bg-green-900/60 text-green-300' },
+  sales_forecast:  { label: '予測', cls: 'bg-yellow-900/60 text-yellow-300' },
+  trend_forecast:  { label: '見込', cls: 'bg-gray-700 text-gray-300' },
+}
+
+function FiscalYearTable() {
+  const [data, setData] = useState<FiscalYearResponse | null>(null)
+  const [loading, setLoading] = useState(true)
+  const [err, setErr] = useState<string | null>(null)
+
+  useEffect(() => {
+    fetch('/api/pl-fiscal-year', { cache: 'no-store' })
+      .then(r => r.ok ? r.json() : Promise.reject(new Error('通期PL取得に失敗しました')))
+      .then((j: FiscalYearResponse) => { setData(j); setErr(null) })
+      .catch(e => setErr(e instanceof Error ? e.message : String(e)))
+      .finally(() => setLoading(false))
+  }, [])
+
+  if (loading) return <div className="bg-gray-800 rounded-xl p-4 text-gray-500 text-sm">通期PL読み込み中...</div>
+  if (err) return <div className="bg-gray-800 rounded-xl p-4 text-red-400 text-sm">{err}</div>
+  if (!data) return null
+
+  const t = data.totals
+  return (
+    <div className="bg-gradient-to-br from-gray-800 to-gray-900 rounded-xl p-4 space-y-3 border border-gray-700/50">
+      <div className="flex items-center justify-between flex-wrap gap-2">
+        <h2 className="text-sm font-medium text-gray-300">通期PL — {data.fiscalLabel}</h2>
+        <div className="flex gap-2 text-[10px]">
+          <span className="px-2 py-0.5 rounded bg-green-900/60 text-green-300">実績</span>
+          <span className="px-2 py-0.5 rounded bg-yellow-900/60 text-yellow-300">当月予測</span>
+          <span className="px-2 py-0.5 rounded bg-gray-700 text-gray-300">将来見込</span>
+        </div>
+      </div>
+      <p className="text-[10px] text-gray-500">
+        過去月: 確定PL（cost_actuals_monthly）／ 当月: BMスクレイプ着地予測 ÷ 1.10 ／ 将来月: 直近3ヶ月平均（税抜）で見込み計算
+      </p>
+
+      <div className="overflow-x-auto -mx-4 px-4">
+        <table className="w-full text-xs min-w-[720px]">
+          <thead>
+            <tr className="border-b border-gray-700">
+              <th className="text-left py-2 text-gray-400 font-normal">月</th>
+              <th className="text-right py-2 text-gray-400 font-normal">売上(税込)</th>
+              <th className="text-right py-2 text-gray-400 font-normal">→ 税抜</th>
+              <th className="text-right py-2 text-gray-400 font-normal">原価</th>
+              <th className="text-right py-2 text-gray-400 font-normal">販管費</th>
+              <th className="text-right py-2 text-gray-400 font-normal">営業利益</th>
+              <th className="text-right py-2 text-gray-400 font-normal">利益率</th>
+              <th className="text-center py-2 text-gray-400 font-normal w-12">区分</th>
+            </tr>
+          </thead>
+          <tbody>
+            {data.months.map(m => {
+              const rowCls = m.isCurrent ? 'bg-yellow-900/10' : (m.isFuture ? 'opacity-70' : '')
+              const opCls = m.operatingProfit >= 0 ? 'text-white' : 'text-red-400'
+              const tag = SOURCE_TAG[m.source]
+              return (
+                <tr key={`${m.year}-${m.month}`} className={`border-b border-gray-800 ${rowCls}`}>
+                  <td className="py-1.5 text-gray-300">{m.year}年{m.month}月</td>
+                  <td className="py-1.5 text-right text-gray-200 font-mono">{formatYenCompact(m.revenueIncl)}</td>
+                  <td className="py-1.5 text-right text-emerald-400 font-mono">{formatYenCompact(m.revenueExcl)}</td>
+                  <td className="py-1.5 text-right text-gray-400 font-mono">{formatYenCompact(m.cogs)}</td>
+                  <td className="py-1.5 text-right text-gray-400 font-mono">{formatYenCompact(m.sga)}</td>
+                  <td className={`py-1.5 text-right font-mono font-semibold ${opCls}`}>{formatYenCompact(m.operatingProfit)}</td>
+                  <td className={`py-1.5 text-right font-mono ${m.opMargin >= 0.05 ? 'text-green-400' : (m.opMargin >= 0 ? 'text-yellow-400' : 'text-red-400')}`}>{pct(m.opMargin)}</td>
+                  <td className="py-1.5 text-center"><span className={`text-[9px] px-1.5 py-0.5 rounded ${tag.cls}`}>{tag.label}</span></td>
+                </tr>
+              )
+            })}
+          </tbody>
+          <tfoot>
+            <tr className="border-t-2 border-gray-600 bg-gray-900/40 font-semibold">
+              <td className="py-2 text-gray-200">通期合計</td>
+              <td className="py-2 text-right text-white font-mono">{formatYenCompact(t.revenueIncl)}</td>
+              <td className="py-2 text-right text-emerald-400 font-mono">{formatYenCompact(t.revenueExcl)}</td>
+              <td className="py-2 text-right text-gray-300 font-mono">{formatYenCompact(t.cogs)}</td>
+              <td className="py-2 text-right text-gray-300 font-mono">{formatYenCompact(t.sga)}</td>
+              <td className={`py-2 text-right font-mono ${t.operatingProfit >= 0 ? 'text-white' : 'text-red-400'}`}>{formatYenCompact(t.operatingProfit)}</td>
+              <td className={`py-2 text-right font-mono ${t.opMargin >= 0.05 ? 'text-green-400' : 'text-yellow-400'}`}>{pct(t.opMargin)}</td>
+              <td className="py-2 text-center text-[9px] text-gray-500">—</td>
+            </tr>
+          </tfoot>
+        </table>
+      </div>
+    </div>
+  )
+}
+
 function Card({ label, value, sub, valueColor = 'text-white' }: { label: string; value: string; sub?: string; valueColor?: string }) {
   return (
     <div className="bg-gray-900/50 rounded-lg p-2.5 sm:p-3">
       <p className="text-[10px] sm:text-xs text-gray-400 mb-0.5 truncate">{label}</p>
       <p className={`text-sm sm:text-lg font-bold ${valueColor} truncate`}>{value}</p>
       {sub && <p className="text-[10px] text-gray-500 mt-0.5 truncate">{sub}</p>}
+    </div>
+  )
+}
+
+// 売上カード: 税込（=BMダッシュボードの数字）を主に表示し、PL計算に使う税抜（÷1.10）を補足
+function RevenueCard({ revenueExcl, sourceLabel }: { revenueExcl: number; sourceLabel: string }) {
+  const revenueIncl = Math.round(revenueExcl * 1.10)
+  return (
+    <div className="bg-gray-900/50 rounded-lg p-2.5 sm:p-3">
+      <p className="text-[10px] sm:text-xs text-gray-400 mb-0.5 truncate">売上高（着地予測）</p>
+      <p className="text-sm sm:text-lg font-bold text-white truncate">{formatYenCompact(revenueIncl)}<span className="text-[10px] text-gray-500 ml-1">税込</span></p>
+      <p className="text-[10px] text-emerald-400 mt-0.5 truncate">→ 税抜 {formatYenCompact(revenueExcl)}（÷1.10）</p>
+      <p className="text-[10px] text-gray-600 mt-0.5 truncate">{sourceLabel}</p>
     </div>
   )
 }
