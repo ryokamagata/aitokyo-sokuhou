@@ -121,9 +121,27 @@ export async function GET(req: Request) {
     let source: MonthEntry['source']
 
     if (slot.isPast) {
-      pl = buildActualPL(slot.year, slot.month)
-      revenueExcl = pl.revenue
-      source = 'pl_actual'
+      // 過去月の判定:
+      //   - cost_actuals_monthly に本物のコストデータがあれば「実績PL」を使う
+      //   - daily_sales 由来の売上しか無い場合は computePLForecast で原価/販管費を推定
+      //     （buildActualPL だとコスト=0で営業利益=売上 となり実態とかけ離れるため）
+      const candidate = buildActualPL(slot.year, slot.month)
+      const hasRealCosts = candidate.coverage.actual > 1 // revenueだけでなくコスト科目にも実績がある
+      if (hasRealCosts) {
+        pl = candidate
+        revenueExcl = pl.revenue
+        source = 'pl_actual'
+      } else {
+        // 売上だけ daily_sales から取れた状態 → コストは予測ロジックで埋める
+        revenueExcl = candidate.revenue
+        pl = computePLForecast({
+          year: slot.year, month: slot.month,
+          todayIsoDate,
+          revenue: revenueExcl,
+          salesConfidence: 'high',
+        })
+        source = 'sales_forecast' // 「PL未取込・売上だけ実績」状態
+      }
     } else if (slot.isCurrent) {
       revenueExcl = currentRevenueExcl
       pl = computePLForecast({
