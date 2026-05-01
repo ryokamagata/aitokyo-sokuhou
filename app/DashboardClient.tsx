@@ -292,14 +292,30 @@ export default function DashboardClient() {
           </div>
 
           {/* BM データ同期 */}
-          <div className="bg-gray-800 rounded-xl p-4">
+          <div className="bg-gray-800 rounded-xl p-4 space-y-2">
             <h2 className="text-sm font-medium text-gray-300 mb-3">BM データ同期</h2>
-            <ScrapeButton url="/api/scrape" label="BM から今すぐ取込" onDone={refresh} />
+            <ScrapeButton url="/api/scrape" label="BM から今すぐ取込（当月）" onDone={refresh} />
+            {(() => {
+              const tokyoNow = new Date(new Date().toLocaleString('en-US', { timeZone: 'Asia/Tokyo' }))
+              const prev = new Date(tokyoNow.getFullYear(), tokyoNow.getMonth() - 1, 1)
+              const py = prev.getFullYear()
+              const pm = prev.getMonth() + 1
+              return (
+                <ScrapeButton
+                  url={`/api/scrape?year=${py}&month=${pm}`}
+                  label={`前月（${py}年${pm}月）の確定スクレイプ`}
+                  onDone={refresh}
+                />
+              )
+            })()}
             {data.lastUpdated && (
               <p className="text-xs text-gray-600 mt-2">
                 最終同期: {new Date(data.lastUpdated).toLocaleString('ja-JP', { month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' })}
               </p>
             )}
+            <p className="text-[10px] text-gray-600 leading-relaxed">
+              ※月の切り替わり後は、前月のBM日次データに最終日まで反映されない場合があるため、月初に「前月の確定スクレイプ」を実行してください。
+            </p>
           </div>
 
           {/* CSV 取込（サブ手段） */}

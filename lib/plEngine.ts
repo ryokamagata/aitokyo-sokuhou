@@ -3,6 +3,7 @@ import {
   getCostActuals,
   getFixedCosts,
   getVariableRates,
+  getMonthlyTotalSales,
   type CostAccount,
   type CostActual,
 } from './db'
@@ -229,7 +230,16 @@ export function buildActualPL(year: number, month: number): PLForecastResult {
     actualByCode.set(a.account_code, (actualByCode.get(a.account_code) ?? 0) + a.amount)
   }
 
-  const revenue = actualByCode.get('revenue') ?? 0
+  // 売上: cost_actuals_monthly に値があればそれを使用（税抜・確定値）
+  // 無い場合は daily_sales の合計（税込）÷ 1.10 で税抜に変換してフォールバック
+  // これにより PL シート未取込の過去月でも売上が¥0で表示されない
+  let revenue = actualByCode.get('revenue') ?? 0
+  if (revenue === 0) {
+    const monthly = getMonthlyTotalSales(year, month, year, month)
+    if (monthly.length > 0 && monthly[0].sales > 0) {
+      revenue = Math.round(monthly[0].sales / 1.10)
+    }
+  }
   const lines: PLLine[] = []
   const coverage = { actual: 0, variable: 0, fixed: 0, default: 0, empty: 0 }
 
