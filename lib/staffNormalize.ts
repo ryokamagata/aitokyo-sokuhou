@@ -48,6 +48,12 @@ const ALIASES: Record<string, string> = {
   'まさき': 'マサキ',
   'そうま': 'souma',
   '隼多': '尾関隼多',
+  // 鎌形さん確認済の追加紐付け
+  '松舘拓也': 'taku',
+  'げんき': '関口元輝',
+  '中村翼': '中村翼名古屋',
+  'ryota': '木暮亮太',
+  'せいや': '古川誠哉',
 }
 
 export function normalizeStaffName(name: string): string {
