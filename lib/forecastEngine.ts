@@ -130,11 +130,18 @@ export interface StandardForecast {
   paceWeight: number
 }
 
+// データ十分性のしきい値: 平日5日 + 土日祝2日 が揃ったらペース100%（鎌形さん要望）
+const PACE_FULL_WEEKDAY_DAYS = 5
+const PACE_FULL_WEEKEND_DAYS = 2
+
 export function computeStandardForecast(
   forecast: ForecastResult,
   prevYearSales: number | null,
   avgYoYRate: number | null,
-  totalRevenueCap: number
+  totalRevenueCap: number,
+  // 第5引数（任意）: 前月実績×季節率で算出した着地予測。
+  // 渡されると YoY より優先してブレンド対象に使う。
+  prevMonthSeasonalEstimate?: number | null
 ): StandardForecast {
   const paceEstimate = forecast.forecastTotal
 
@@ -146,13 +153,26 @@ export function computeStandardForecast(
         : prevYearSales
   }
 
-  // 当月実績があればペース100%、無ければYoY100%にフォールバック
-  const hasActualData = forecast.weekdayActualDays + forecast.weekendActualDays > 0
-  const paceWeight = hasActualData ? 1.0 : 0.0
+  // 段階的なペース信頼度:
+  //   平日 ≥ 5日 AND 土日祝 ≥ 2日 → 1.0（実測ペース100%）
+  //   それ以下は加重平均で連続的に低下（少ないデータでペース予測が暴走するのを防ぐ）
+  //   weekday/weekend を必要日数の比率の加重平均（必要日数比で重み付け）
+  const wdNeed = PACE_FULL_WEEKEND_DAYS + PACE_FULL_WEEKDAY_DAYS
+  const wdRatio = Math.min(forecast.weekdayActualDays / PACE_FULL_WEEKDAY_DAYS, 1.0)
+  const weRatio = Math.min(forecast.weekendActualDays / PACE_FULL_WEEKEND_DAYS, 1.0)
+  const paceWeight = wdRatio * (PACE_FULL_WEEKDAY_DAYS / wdNeed) + weRatio * (PACE_FULL_WEEKEND_DAYS / wdNeed)
+
+  // ブレンド対象（pace と組み合わせる "もう片方"）:
+  //   優先: 前月実績×季節変動率（鎌形さん要望: 前月の流れを汲む方がモチベが上がる）
+  //   フォールバック: 前年同月×YoY
+  const blendBase: number | null =
+    prevMonthSeasonalEstimate !== null && prevMonthSeasonalEstimate !== undefined && prevMonthSeasonalEstimate > 0
+      ? prevMonthSeasonalEstimate
+      : (yoyEstimate !== null && yoyEstimate > 0 ? yoyEstimate : null)
 
   let standard: number
-  if (yoyEstimate !== null && yoyEstimate > 0) {
-    standard = Math.round(paceEstimate * paceWeight + yoyEstimate * (1 - paceWeight))
+  if (blendBase !== null) {
+    standard = Math.round(paceEstimate * paceWeight + blendBase * (1 - paceWeight))
   } else {
     standard = paceEstimate
   }
@@ -161,8 +181,8 @@ export function computeStandardForecast(
   const conservative = Math.round(standard * 0.95)
 
   let optimistic: number
-  if (yoyEstimate !== null && yoyEstimate > 0) {
-    optimistic = Math.round(Math.max(paceEstimate, yoyEstimate) * 1.03)
+  if (blendBase !== null) {
+    optimistic = Math.round(Math.max(paceEstimate, blendBase) * 1.03)
   } else {
     optimistic = Math.round(standard * 1.05)
   }

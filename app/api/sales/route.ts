@@ -11,6 +11,7 @@ import {
   getPerStoreCycle,
   getMonthlyTotalSales,
   getStaffSalesForMonth,
+  getSeasonalIndex,
 } from '@/lib/db'
 import { computeForecast, computeStandardForecast, computeAverageYoYRate } from '@/lib/forecastEngine'
 import { STORES, MAX_REVENUE_PER_SEAT, isClosedStore } from '@/lib/stores'
@@ -175,8 +176,24 @@ export async function GET() {
   const customerForecast = yoyTotalForecast !== null
     ? Math.round(paceTotalForecast * custPaceWeight + yoyTotalForecast * (1 - custPaceWeight))
     : paceTotalForecast
-  const nominatedForecast = Math.round((nominated / effectiveDays) * daysInMonth)
-  const freeVisitForecast = Math.round((freeVisit / effectiveDays) * daysInMonth)
+
+  // 指名 / フリー の着地予測も同じく YoY ブレンド（月初は前年同月の構成比を反映）
+  const prevYearNominatedTotal = prevYearVisitors.filter(v => !isClosedStore(v.store)).reduce((s, v) => s + v.nominated, 0)
+  const prevYearFreeTotal = prevYearVisitors.filter(v => !isClosedStore(v.store)).reduce((s, v) => s + v.free_visit, 0)
+  const yoyNominatedForecast = prevYearNominatedTotal > 0
+    ? Math.round(prevYearNominatedTotal * (1 + (customerYoYRate ?? 0)))
+    : null
+  const yoyFreeForecast = prevYearFreeTotal > 0
+    ? Math.round(prevYearFreeTotal * (1 + (customerYoYRate ?? 0)))
+    : null
+  const paceNominatedForecast = Math.round((nominated / effectiveDays) * daysInMonth)
+  const paceFreeForecast = Math.round((freeVisit / effectiveDays) * daysInMonth)
+  const nominatedForecast = yoyNominatedForecast !== null
+    ? Math.round(paceNominatedForecast * custPaceWeight + yoyNominatedForecast * (1 - custPaceWeight))
+    : paceNominatedForecast
+  const freeVisitForecast = yoyFreeForecast !== null
+    ? Math.round(paceFreeForecast * custPaceWeight + yoyFreeForecast * (1 - custPaceWeight))
+    : paceFreeForecast
 
   // 指名率 = 各店舗の (指名 / (指名+フリー)) の平均
   const nominationRates = visitorStores
@@ -232,11 +249,22 @@ export async function GET() {
     const prevYearAllMonths = month > 1 ? getMonthlyTotalSales(year - 1, 1, year - 1, 12) : []
     const avgYoYRate = computeAverageYoYRate(year, month, currentYearMonthly, prevYearAllMonths)
 
+    // 前月実績 × 季節変動率 で当月着地のもう一つの推定値を作る（鎌形さん要望: ブレンド対象）
+    const seasonalIdx = getSeasonalIndex(year)
+    const curRatio = seasonalIdx[month] ?? 1.0
+    const prevMonthInYear = month === 1 ? 12 : month - 1
+    const prevMonthYearVal = month === 1 ? year - 1 : year
+    const prevMonthData = getMonthlyTotalSales(prevMonthYearVal, prevMonthInYear, prevMonthYearVal, prevMonthInYear)
+    const prevRatio = seasonalIdx[prevMonthInYear] ?? 1.0
+    const prevMonthSeasonalEstimate = (prevMonthData.length > 0 && prevMonthData[0].sales > 0 && prevRatio > 0)
+      ? Math.round(prevMonthData[0].sales * (curRatio / prevRatio))
+      : null
+
     const totalRevenueCap = STORES
       .filter(s => !isClosedStore(s.name))
       .reduce((sum, s) => sum + s.seats * MAX_REVENUE_PER_SEAT, 0)
 
-    const std = computeStandardForecast(forecast, prevYearSales, avgYoYRate, totalRevenueCap)
+    const std = computeStandardForecast(forecast, prevYearSales, avgYoYRate, totalRevenueCap, prevMonthSeasonalEstimate)
 
     forecastDetail = {
       standard: std.standard,

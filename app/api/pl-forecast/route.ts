@@ -1,5 +1,5 @@
 import { NextResponse } from 'next/server'
-import { getScrapedDailySales, getTarget, getRecentCostActuals, savePLSnapshot, getCostAccounts, getLastScrapeTime, getPLImportSummary, getFixedCosts, getVariableRates, getMonthlyTotalSales } from '@/lib/db'
+import { getScrapedDailySales, getTarget, getRecentCostActuals, savePLSnapshot, getCostAccounts, getLastScrapeTime, getPLImportSummary, getFixedCosts, getVariableRates, getMonthlyTotalSales, getSeasonalIndex } from '@/lib/db'
 import { computeForecast, computeStandardForecast, computeAverageYoYRate } from '@/lib/forecastEngine'
 import { computePLForecast, buildActualPL } from '@/lib/plEngine'
 import { CUTOFF_HOUR, CUTOFF_MINUTE } from '@/lib/autoScrape'
@@ -59,16 +59,26 @@ export async function GET(req: Request) {
     salesConfidence = fc.confidence
 
     // ── ダッシュボードの「着地予測」と完全一致させる ──
-    // /api/sales と同じ計算式（ペース×weight + YoY×(1-weight)、席数キャップ）を使う
+    // /api/sales と同じ計算式（ペース×weight + 前月×季節率 or YoY×(1-weight)、席数キャップ）
     const prevYearMonthly = getMonthlyTotalSales(year - 1, month, year - 1, month)
     const prevYearSales = prevYearMonthly.length > 0 ? prevYearMonthly[0].sales : null
     const currentYearMonthly = month > 1 ? getMonthlyTotalSales(year, 1, year, month - 1) : []
     const prevYearAllMonths = month > 1 ? getMonthlyTotalSales(year - 1, 1, year - 1, 12) : []
     const avgYoYRate = computeAverageYoYRate(year, month, currentYearMonthly, prevYearAllMonths)
+    // 前月実績×季節率（鎌形さん要望: ブレンド対象として優先）
+    const seasonalIdx = getSeasonalIndex(year)
+    const curRatio = seasonalIdx[month] ?? 1.0
+    const prevMonthInYear = month === 1 ? 12 : month - 1
+    const prevMonthYearVal = month === 1 ? year - 1 : year
+    const prevMonthData = getMonthlyTotalSales(prevMonthYearVal, prevMonthInYear, prevMonthYearVal, prevMonthInYear)
+    const prevRatio = seasonalIdx[prevMonthInYear] ?? 1.0
+    const prevMonthSeasonalEstimate = (prevMonthData.length > 0 && prevMonthData[0].sales > 0 && prevRatio > 0)
+      ? Math.round(prevMonthData[0].sales * (curRatio / prevRatio))
+      : null
     const totalRevenueCap = STORES
       .filter(s => !isClosedStore(s.name))
       .reduce((sum, s) => sum + s.seats * MAX_REVENUE_PER_SEAT, 0)
-    const std = computeStandardForecast(fc, prevYearSales, avgYoYRate, totalRevenueCap)
+    const std = computeStandardForecast(fc, prevYearSales, avgYoYRate, totalRevenueCap, prevMonthSeasonalEstimate)
     // ─── 税抜き化: 売上速報/BMの売上は税込み、原価は税抜きで計上されているため統一 ──
     // 消費税率10% を前提に std.standard (税込) を税抜きに変換
     const CONSUMPTION_TAX_RATE = 0.10
