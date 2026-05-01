@@ -227,30 +227,32 @@ export async function GET() {
       let currentMonthEstimate: number | null = null
       let currentMonthCustEstimate: number | null = null
 
-      if (currentMonthActual && currentMonthActual.sales > 0) {
-        // 当月実績あり → forecastEngineで平日/土日祝ペース着地を算出
-        // ダッシュボードと合わせて 20:45締めcutoff でフィルタ
-        const cutoffDate = `${toYear}-${String(toMonth).padStart(2, '0')}-${String(Math.max(today, 0)).padStart(2, '0')}`
-        const rawDaily = getScrapedDailySales(toYear, toMonth)
-        const dailySalesForForecast: DailySales[] = rawDaily
-          .filter(r => today > 0 && r.date <= cutoffDate)
-          .map(r => ({
-            date: r.date,
-            dayOfWeek: new Date(r.date + 'T00:00:00').getDay(),
-            totalAmount: r.sales,
-            customers: r.customers,
-            stores: {},
-            staff: {},
-          }))
+      // 当月のスクレイプ日数（cutoff考慮）が3日以上ある場合のみ forecastEngine を信頼する。
+      // 月初（today=0 or 1日目だけ）だと forecast=0 が出てしまい、baselineMonthly が
+      // 0 になって 6月以降の予測まで全部0になる原因だった。
+      const cutoffDate = `${toYear}-${String(toMonth).padStart(2, '0')}-${String(Math.max(today, 0)).padStart(2, '0')}`
+      const rawDaily = getScrapedDailySales(toYear, toMonth)
+      const dailySalesForForecast: DailySales[] = rawDaily
+        .filter(r => today > 0 && r.date <= cutoffDate)
+        .map(r => ({
+          date: r.date,
+          dayOfWeek: new Date(r.date + 'T00:00:00').getDay(),
+          totalAmount: r.sales,
+          customers: r.customers,
+          stores: {},
+          staff: {},
+        }))
+      const hasEnoughCurrentMonthData = dailySalesForForecast.length >= 3 && (currentMonthActual?.sales ?? 0) > 0
+
+      if (hasEnoughCurrentMonthData) {
         const fc = computeForecast(dailySalesForForecast, toYear, toMonth, today)
         currentMonthEstimate = fc.forecastTotal
 
-        // 客数は日割りペースのまま（forecastEngineは売上のみ対象）
         const daysElapsed = Math.max(today, 1)
         const cutoffCustomers = dailySalesForForecast.reduce((s, d) => s + d.customers, 0)
         currentMonthCustEstimate = Math.round((cutoffCustomers / daysElapsed) * daysInCurrentMonth)
       } else if (prevYearCurrentMonthData) {
-        // 当月データなし → YoYフォールバック
+        // 当月データ不足 → 前年同月 × YoYフォールバック
         currentMonthEstimate = avgGrowthRate !== null
           ? Math.round(prevYearCurrentMonthData.sales * (1 + avgGrowthRate))
           : prevYearCurrentMonthData.sales
