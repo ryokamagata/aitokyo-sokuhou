@@ -53,7 +53,9 @@ export type PLForecastResult = {
   sgaPromo: number
   sgaOther: number
   lines: PLLine[]
-  coverage: { actual: number; variable: number; fixed: number; default: number; empty: number }
+  // coverage.actual はrevenue+cogs+sgaの合計、actualCostsはコスト科目のみ
+  // 「PLが取り込まれているか」を判定するときは actualCosts を使う
+  coverage: { actual: number; actualCosts: number; variable: number; fixed: number; default: number; empty: number }
   breakEvenRevenue: number  // 損益分岐点売上高
   // 損益分岐点の計算根拠
   variableCost: number       // 変動費（売上連動コスト）
@@ -168,7 +170,7 @@ export function computePLForecast(input: PLEngineInput): PLForecastResult {
   }
 
   const lines: PLLine[] = []
-  const coverage = { actual: 0, variable: 0, fixed: 0, default: 0, empty: 0 }
+  const coverage = { actual: 0, actualCosts: 0, variable: 0, fixed: 0, default: 0, empty: 0 }
 
   for (const acc of accounts) {
     const cat = acc.category as Category
@@ -190,6 +192,7 @@ export function computePLForecast(input: PLEngineInput): PLForecastResult {
       amount = actualByCode.get(acc.code)!
       source = 'actual'
       coverage.actual++
+      coverage.actualCosts++
     } else if (fixedByCode.has(acc.code)) {
       amount = fixedByCode.get(acc.code)!
       source = 'fixed'
@@ -241,13 +244,18 @@ export function buildActualPL(year: number, month: number): PLForecastResult {
     }
   }
   const lines: PLLine[] = []
-  const coverage = { actual: 0, variable: 0, fixed: 0, default: 0, empty: 0 }
+  const coverage = { actual: 0, actualCosts: 0, variable: 0, fixed: 0, default: 0, empty: 0 }
 
   for (const acc of accounts) {
     if (acc.category === 'non_op') continue
     const amount = actualByCode.get(acc.code) ?? 0
-    if (amount !== 0) coverage.actual++
-    else coverage.empty++
+    if (amount !== 0) {
+      coverage.actual++
+      // 売上以外（=cogs/sga）の実績件数を別途カウント
+      if (acc.category !== 'revenue') coverage.actualCosts++
+    } else {
+      coverage.empty++
+    }
     lines.push({
       code: acc.code,
       name: acc.name,
@@ -265,7 +273,7 @@ export function buildActualPL(year: number, month: number): PLForecastResult {
 
 function aggregate(
   lines: PLLine[],
-  coverage: { actual: number; variable: number; fixed: number; default: number; empty: number },
+  coverage: { actual: number; actualCosts: number; variable: number; fixed: number; default: number; empty: number },
   year: number, month: number, stage: PLStage, confidence: PLConfidence, revenue: number
 ): PLForecastResult {
   const sum = (filter: (l: PLLine) => boolean) =>

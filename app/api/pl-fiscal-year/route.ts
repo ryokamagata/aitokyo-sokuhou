@@ -142,7 +142,8 @@ export async function GET(req: Request) {
       //   - daily_sales 由来の売上しか無い場合は computePLForecast で原価/販管費を推定
       //     （buildActualPL だとコスト=0で営業利益=売上 となり実態とかけ離れるため）
       const candidate = buildActualPL(slot.year, slot.month)
-      const hasRealCosts = candidate.coverage.actual > 1 // revenueだけでなくコスト科目にも実績がある
+      // コスト科目に5件以上の実績がある月のみ「PL取込済み」とみなす
+      const hasRealCosts = candidate.coverage.actualCosts >= 5
       if (hasRealCosts) {
         pl = candidate
         revenueExcl = pl.revenue

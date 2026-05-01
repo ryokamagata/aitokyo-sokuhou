@@ -82,7 +82,9 @@ export async function GET(req: Request) {
   let forecast
   if (isPastMonth) {
     const candidate = buildActualPL(year, month)
-    const hasRealCosts = candidate.coverage.actual > 1
+    // 「PL取込済み」の判定: コスト科目に5件以上の実績がある月
+    // （revenueだけ・家賃だけのような部分取込状態を弾く）
+    const hasRealCosts = candidate.coverage.actualCosts >= 5
     if (hasRealCosts) {
       forecast = candidate
     } else {
