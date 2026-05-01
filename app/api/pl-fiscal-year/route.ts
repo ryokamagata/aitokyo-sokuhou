@@ -139,6 +139,72 @@ export async function GET(req: Request) {
     return Math.round(revenueIncl / (1 + TAX_RATE))
   }
 
+  // ── 5月以降の原価・販管費アンカー: 4月のPL構造を基準にする ──
+  // 鎌形さん要望:
+  //   5月以降の cogs が ¥57.5M ベース（旧スタッフルール計算）になっており、
+  //   4月の ¥63.5M（新卒入社込みの実態）と乖離していた。
+  //   4月の variable / fixed 分解をそのまま 5月以降の anchor として使う。
+  //
+  // 4月の PL を一度だけ計算して、各 line の source (variable/fixed) を分けて集計。
+  //   - variable lines: 4月の rate (= 4月のline amount / 4月のrevenue) を保持し、
+  //     将来月の売上に乗じる
+  //   - fixed lines: 4月の額をそのまま将来月にも適用
+  let anchorVariableCogsRate = 0
+  let anchorFixedCogs = 0
+  let anchorVariableSgaRate = 0
+  let anchorFixedSga = 0
+  let anchorRevenueExcl = 0
+  {
+    const aprilSlot = monthSlots.find(s => s.year === curY && s.month === 4)
+      ?? { year: curY, month: 4 }
+    const aprilMonthlyTotal = getMonthlyTotalSales(aprilSlot.year, aprilSlot.month, aprilSlot.year, aprilSlot.month)
+    const aprilRevIncl = aprilMonthlyTotal.length > 0 ? aprilMonthlyTotal[0].sales : 0
+    if (aprilRevIncl > 0) {
+      const aprilRevExcl = Math.round(aprilRevIncl / (1 + TAX_RATE))
+      const aprilPL = computePLForecast({
+        year: aprilSlot.year, month: aprilSlot.month,
+        todayIsoDate,
+        revenue: aprilRevExcl,
+        salesConfidence: 'high',
+      })
+      anchorRevenueExcl = aprilRevExcl
+      for (const l of aprilPL.lines) {
+        if (l.category === 'cogs') {
+          if (l.source === 'variable' || l.source === 'default') {
+            // 4月のrateを再現するため amount/aprilRevExcl を rate として保持
+            if (aprilRevExcl > 0) anchorVariableCogsRate += l.amount / aprilRevExcl
+          } else if (l.source === 'fixed' || l.source === 'actual') {
+            anchorFixedCogs += l.amount
+          }
+        } else if (l.category === 'sga') {
+          if (l.source === 'variable' || l.source === 'default') {
+            if (aprilRevExcl > 0) anchorVariableSgaRate += l.amount / aprilRevExcl
+          } else if (l.source === 'fixed' || l.source === 'actual') {
+            anchorFixedSga += l.amount
+          }
+        }
+      }
+    }
+  }
+
+  // 将来月のPLを「4月アンカー」を使って構築
+  function buildAnchoredPL(year: number, month: number, revenueExcl: number): PLForecastResult {
+    const cogs = Math.round(anchorFixedCogs + revenueExcl * anchorVariableCogsRate)
+    const sga = Math.round(anchorFixedSga + revenueExcl * anchorVariableSgaRate)
+    const grossProfit = revenueExcl - cogs
+    const operatingProfit = grossProfit - sga
+    const opMargin = revenueExcl > 0 ? operatingProfit / revenueExcl : 0
+    // 細目は computePLForecast で出した値をベースに比例スケール
+    const base = computePLForecast({
+      year, month, todayIsoDate, revenue: revenueExcl, salesConfidence: 'low',
+    })
+    return {
+      ...base,
+      revenue: revenueExcl,
+      cogs, sga, grossProfit, operatingProfit, opMargin,
+    }
+  }
+
   type MonthEntry = {
     year: number
     month: number
@@ -203,22 +269,18 @@ export async function GET(req: Request) {
       }
     } else if (slot.isCurrent) {
       revenueExcl = currentMonthRevenueExclWithStores()
-      pl = computePLForecast({
-        year: slot.year, month: slot.month,
-        todayIsoDate,
-        revenue: revenueExcl,
-        salesConfidence: currentSalesConfidence,
-      })
+      // 当月以降は4月アンカーを使ってコスト推定（5月以降の人件費スタッフルール過小推定を回避）
+      pl = anchorRevenueExcl > 0
+        ? buildAnchoredPL(slot.year, slot.month, revenueExcl)
+        : computePLForecast({ year: slot.year, month: slot.month, todayIsoDate, revenue: revenueExcl, salesConfidence: currentSalesConfidence })
       source = 'sales_forecast'
     } else {
       // 将来月: baselineMonthly × 季節変動率（+ 出店計画分）
       revenueExcl = forecastFutureRevenueExcl(slot.year, slot.month)
-      pl = computePLForecast({
-        year: slot.year, month: slot.month,
-        todayIsoDate,
-        revenue: revenueExcl,
-        salesConfidence: 'low',
-      })
+      // 5月以降のコスト推定: 4月アンカー（実態反映＝新卒入社込み）を使う
+      pl = anchorRevenueExcl > 0
+        ? buildAnchoredPL(slot.year, slot.month, revenueExcl)
+        : computePLForecast({ year: slot.year, month: slot.month, todayIsoDate, revenue: revenueExcl, salesConfidence: 'low' })
       source = 'trend_forecast'
     }
 
