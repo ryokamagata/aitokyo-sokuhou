@@ -244,7 +244,7 @@ export default function PLForecastView({ dataVersion = 0 }: { dataVersion?: numb
       </div>
 
       {/* 通期PL（9月期12ヶ月の実績＋予測） */}
-      <FiscalYearTable />
+      <FiscalYearTable dataVersion={dataVersion} />
 
       {/* 取込/シード */}
       <div className="bg-gray-800 rounded-xl p-4 space-y-3">
@@ -1567,18 +1567,19 @@ const SOURCE_TAG: Record<FiscalMonth['source'], { label: string; cls: string }> 
   trend_forecast:  { label: '見込', cls: 'bg-gray-700 text-gray-300' },
 }
 
-function FiscalYearTable() {
+function FiscalYearTable({ dataVersion = 0 }: { dataVersion?: number }) {
   const [data, setData] = useState<FiscalYearResponse | null>(null)
   const [loading, setLoading] = useState(true)
   const [err, setErr] = useState<string | null>(null)
 
   useEffect(() => {
+    setLoading(true)
     fetch('/api/pl-fiscal-year', { cache: 'no-store' })
       .then(r => r.ok ? r.json() : Promise.reject(new Error('通期PL取得に失敗しました')))
       .then((j: FiscalYearResponse) => { setData(j); setErr(null) })
       .catch(e => setErr(e instanceof Error ? e.message : String(e)))
       .finally(() => setLoading(false))
-  }, [])
+  }, [dataVersion])
 
   if (loading) return <div className="bg-gray-800 rounded-xl p-4 text-gray-500 text-sm">通期PL読み込み中...</div>
   if (err) return <div className="bg-gray-800 rounded-xl p-4 text-red-400 text-sm">{err}</div>
