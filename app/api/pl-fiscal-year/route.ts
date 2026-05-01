@@ -1,5 +1,5 @@
 import { NextResponse } from 'next/server'
-import { getScrapedDailySales, getMonthlyTotalSales, getSeasonalIndex } from '@/lib/db'
+import { getScrapedDailySales, getMonthlyTotalSales, getSeasonalIndex, getStoreOpeningRevenue } from '@/lib/db'
 import { computeForecast } from '@/lib/forecastEngine'
 import { computePLForecast, buildActualPL, type PLForecastResult } from '@/lib/plEngine'
 import { CUTOFF_HOUR, CUTOFF_MINUTE } from '@/lib/autoScrape'
@@ -115,13 +115,28 @@ export async function GET(req: Request) {
     ? currentMonthEstimateIncl / currentMonthSeasonalRatio
     : 0
 
-  function forecastFutureRevenueExcl(_year: number, month: number): number {
+  // 出店計画による上乗せ（history と同じ）— 当年の予測月に新店売上を加算
+  const storeOpeningByMonth: Record<number, number> = {}
+  for (const r of getStoreOpeningRevenue(curY)) {
+    storeOpeningByMonth[r.month] = (storeOpeningByMonth[r.month] ?? 0) + r.revenue
+  }
+
+  function forecastFutureRevenueExcl(year: number, month: number): number {
     const moRatio = seasonalIndex[month] ?? 1.0
-    if (baselineMonthlyIncl > 0) {
-      const projectedIncl = Math.round(baselineMonthlyIncl * moRatio)
-      return Math.round(projectedIncl / (1 + TAX_RATE))
+    let projectedIncl = baselineMonthlyIncl > 0
+      ? Math.round(baselineMonthlyIncl * moRatio)
+      : currentRevenueIncl
+    // 出店計画分を加算（当年の月のみ）
+    if (year === curY && storeOpeningByMonth[month]) {
+      projectedIncl += storeOpeningByMonth[month]
     }
-    return currentRevenueExcl
+    return Math.round(projectedIncl / (1 + TAX_RATE))
+  }
+
+  function currentMonthRevenueExclWithStores(): number {
+    let revenueIncl = currentMonthEstimateIncl
+    if (storeOpeningByMonth[curM]) revenueIncl += storeOpeningByMonth[curM]
+    return Math.round(revenueIncl / (1 + TAX_RATE))
   }
 
   type MonthEntry = {
@@ -147,30 +162,47 @@ export async function GET(req: Request) {
     let source: MonthEntry['source']
 
     if (slot.isPast) {
-      // 過去月の判定:
-      //   - cost_actuals_monthly に本物のコストデータがあれば「実績PL」を使う
-      //   - daily_sales 由来の売上しか無い場合は computePLForecast で原価/販管費を推定
-      //     （buildActualPL だとコスト=0で営業利益=売上 となり実態とかけ離れるため）
+      // 過去月: history と同じ daily_sales 集計（税込）を税抜に換算して使用
+      // これで /api/history と /api/pl-fiscal-year の月別売上が一致する
+      const monthlyTotal = getMonthlyTotalSales(slot.year, slot.month, slot.year, slot.month)
+      const dailySumIncl = monthlyTotal.length > 0 ? monthlyTotal[0].sales : 0
+      const dailySumExcl = Math.round(dailySumIncl / (1 + TAX_RATE))
+
       const candidate = buildActualPL(slot.year, slot.month)
-      // コスト科目に5件以上の実績がある月のみ「PL取込済み」とみなす
       const hasRealCosts = candidate.coverage.actualCosts >= 5
       if (hasRealCosts) {
-        pl = candidate
-        revenueExcl = pl.revenue
+        // PL取込済み: コストは PL の確定値を使うが、売上は daily_sales 由来で history と一致させる
+        pl = computePLForecast({
+          year: slot.year, month: slot.month,
+          todayIsoDate,
+          revenue: dailySumExcl,
+          salesConfidence: 'high',
+        })
+        // ただしコストはPL実績で上書き
+        pl = { ...pl,
+          revenue: dailySumExcl,
+          cogs: candidate.cogs, sga: candidate.sga,
+          grossProfit: dailySumExcl - candidate.cogs,
+          operatingProfit: dailySumExcl - candidate.cogs - candidate.sga,
+          opMargin: dailySumExcl > 0 ? (dailySumExcl - candidate.cogs - candidate.sga) / dailySumExcl : 0,
+          cogsMaterial: candidate.cogsMaterial, cogsPersonnel: candidate.cogsPersonnel, cogsPromo: candidate.cogsPromo,
+          sgaPersonnel: candidate.sgaPersonnel, sgaRent: candidate.sgaRent, sgaUtility: candidate.sgaUtility, sgaPromo: candidate.sgaPromo, sgaOther: candidate.sgaOther,
+        }
+        revenueExcl = dailySumExcl
         source = 'pl_actual'
       } else {
-        // 売上だけ daily_sales から取れた状態 → コストは予測ロジックで埋める
-        revenueExcl = candidate.revenue
+        // PL未取込: 売上は daily_sales 由来、コストは推定
+        revenueExcl = dailySumExcl
         pl = computePLForecast({
           year: slot.year, month: slot.month,
           todayIsoDate,
           revenue: revenueExcl,
           salesConfidence: 'high',
         })
-        source = 'sales_forecast' // 「PL未取込・売上だけ実績」状態
+        source = 'sales_forecast'
       }
     } else if (slot.isCurrent) {
-      revenueExcl = currentRevenueExcl
+      revenueExcl = currentMonthRevenueExclWithStores()
       pl = computePLForecast({
         year: slot.year, month: slot.month,
         todayIsoDate,
@@ -179,7 +211,7 @@ export async function GET(req: Request) {
       })
       source = 'sales_forecast'
     } else {
-      // 将来月: 前年同月 × YoY 成長率（季節性を反映）でベース売上を作り、コストは予測ロジック
+      // 将来月: baselineMonthly × 季節変動率（+ 出店計画分）
       revenueExcl = forecastFutureRevenueExcl(slot.year, slot.month)
       pl = computePLForecast({
         year: slot.year, month: slot.month,
