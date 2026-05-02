@@ -141,18 +141,15 @@ export async function GET(req: Request) {
 
   // ── 5月以降の原価・販管費アンカー: 4月のPL構造を基準にする ──
   // 鎌形さん要望:
-  //   5月以降の cogs が ¥57.5M ベース（旧スタッフルール計算）になっており、
-  //   4月の ¥63.5M（新卒入社込みの実態）と乖離していた。
-  //   4月の variable / fixed 分解をそのまま 5月以降の anchor として使う。
-  //
-  // 4月の PL を一度だけ計算して、各 line の source (variable/fixed) を分けて集計。
-  //   - variable lines: 4月の rate (= 4月のline amount / 4月のrevenue) を保持し、
-  //     将来月の売上に乗じる
-  //   - fixed lines: 4月の額をそのまま将来月にも適用
+  //   1) 原価: 4月の variable rate × 売上 + 4月の fixed amount を踏襲
+  //      （新卒入社込みの人件費が継続される前提）
+  //   2) 販管費: ほぼ完全固定（4月の合計をそのまま）
+  //      売上に応じた変動はごく僅か（5%だけ売上比で調整）にとどめる。
+  //      家賃・固定費的な項目が大半なので売上連動はほぼ無いという経営実感。
+  const SGA_REVENUE_SENSITIVITY = 0.05  // 売上変動の5%だけ販管費に反映（ほぼ固定）
   let anchorVariableCogsRate = 0
   let anchorFixedCogs = 0
-  let anchorVariableSgaRate = 0
-  let anchorFixedSga = 0
+  let anchorTotalSga = 0   // 4月の販管費合計（variable + fixed まとめて固定値扱い）
   let anchorRevenueExcl = 0
   {
     const aprilSlot = monthSlots.find(s => s.year === curY && s.month === 4)
@@ -168,19 +165,13 @@ export async function GET(req: Request) {
         salesConfidence: 'high',
       })
       anchorRevenueExcl = aprilRevExcl
+      anchorTotalSga = aprilPL.sga
       for (const l of aprilPL.lines) {
         if (l.category === 'cogs') {
           if (l.source === 'variable' || l.source === 'default') {
-            // 4月のrateを再現するため amount/aprilRevExcl を rate として保持
             if (aprilRevExcl > 0) anchorVariableCogsRate += l.amount / aprilRevExcl
           } else if (l.source === 'fixed' || l.source === 'actual') {
             anchorFixedCogs += l.amount
-          }
-        } else if (l.category === 'sga') {
-          if (l.source === 'variable' || l.source === 'default') {
-            if (aprilRevExcl > 0) anchorVariableSgaRate += l.amount / aprilRevExcl
-          } else if (l.source === 'fixed' || l.source === 'actual') {
-            anchorFixedSga += l.amount
           }
         }
       }
@@ -189,8 +180,11 @@ export async function GET(req: Request) {
 
   // 将来月のPLを「4月アンカー」を使って構築
   function buildAnchoredPL(year: number, month: number, revenueExcl: number): PLForecastResult {
+    // 原価: 4月のvariable rate × 売上 + 4月のfixed amount
     const cogs = Math.round(anchorFixedCogs + revenueExcl * anchorVariableCogsRate)
-    const sga = Math.round(anchorFixedSga + revenueExcl * anchorVariableSgaRate)
+    // 販管費: 4月の合計をベースに、売上変動の5%だけ反映（経営実感: 販管費は売上にほぼ連動しない）
+    const revenueDeltaRatio = anchorRevenueExcl > 0 ? (revenueExcl / anchorRevenueExcl - 1) : 0
+    const sga = Math.round(anchorTotalSga * (1 + revenueDeltaRatio * SGA_REVENUE_SENSITIVITY))
     const grossProfit = revenueExcl - cogs
     const operatingProfit = grossProfit - sga
     const opMargin = revenueExcl > 0 ? operatingProfit / revenueExcl : 0
