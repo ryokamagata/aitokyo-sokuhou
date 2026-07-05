@@ -9,6 +9,7 @@ import StaffBreakdown from '@/components/StaffBreakdown'
 import TargetInput from '@/components/TargetInput'
 import UploadZone from '@/components/UploadZone'
 import ScrapeButton from '@/components/ScrapeButton'
+import BmSettings from '@/components/BmSettings'
 import HistoryView from '@/components/HistoryView'
 import AnalysisView from '@/components/AnalysisView'
 import KpiView from '@/components/KpiView'
@@ -107,6 +108,7 @@ export default function DashboardClient() {
           >
             月次レポート
           </a>
+          <BmSettings />
         </div>
       </div>
 

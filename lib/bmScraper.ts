@@ -6,6 +6,7 @@ import {
   upsertMonthlyUsers,
   upsertMonthlyCycle,
   upsertUtilization,
+  getSetting,
 } from './db'
 import { STORES } from './stores'
 
@@ -88,18 +89,42 @@ async function fetchFollowRedirects(
 
 // ─── BM auth ─────────────────────────────────────────────────────────────────
 
-async function loginGroup(): Promise<Cookies> {
-  const loginId = process.env.BM_LOGIN_ID
-  const password = process.env.BM_PASSWORD
-  if (!loginId || !password) throw new Error('BM_LOGIN_ID / BM_PASSWORD env vars not set')
+// 認証情報は DB (設定画面から保存) を優先し、無ければ環境変数にフォールバック
+export function getBmCredentials(): { loginId: string; password: string } {
+  const loginId = getSetting('bm_login_id') ?? process.env.BM_LOGIN_ID
+  const password = getSetting('bm_password') ?? process.env.BM_PASSWORD
+  if (!loginId || !password) {
+    throw new Error('BMログイン情報が未設定です（画面のBM設定または BM_LOGIN_ID / BM_PASSWORD 環境変数で設定してください）')
+  }
+  return { loginId, password }
+}
 
-  // POST login - BM returns 302 on success, 200 (login page) on failure
-  const res = await fetch(`${BM_BASE}/groupmanage/login/`, {
+// POST login - BM returns 302 on success, 200 (login page) on failure
+async function postLogin(loginId: string, password: string): Promise<Response> {
+  return fetch(`${BM_BASE}/groupmanage/login/`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
     body: new URLSearchParams({ login_id: loginId, password }).toString(),
     redirect: 'manual',
   })
+}
+
+// 保存前の接続テスト用。実際にBMへログインして認証情報を検証する
+export async function verifyBmLogin(
+  loginId: string,
+  password: string
+): Promise<{ ok: boolean; error?: string }> {
+  const res = await postLogin(loginId, password)
+  if (res.status === 302) return { ok: true }
+  const html = await res.text()
+  const errMatch = html.match(/<div class="error">([^<]+)</)
+  return { ok: false, error: errMatch ? errMatch[1] : 'ログインに失敗しました' }
+}
+
+async function loginGroup(): Promise<Cookies> {
+  const { loginId, password } = getBmCredentials()
+
+  const res = await postLogin(loginId, password)
 
   if (res.status !== 302) {
     // Login page returned instead of redirect = credentials rejected

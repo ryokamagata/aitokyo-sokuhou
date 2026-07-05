@@ -254,6 +254,12 @@ function runMigrations(db: Database.Database) {
       payload_json TEXT
     );
     CREATE INDEX IF NOT EXISTS idx_pls_ym ON pl_forecast_snapshots(year, month);
+
+    CREATE TABLE IF NOT EXISTS app_settings (
+      key        TEXT PRIMARY KEY,
+      value      TEXT NOT NULL,
+      updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+    );
   `)
 
   // `subcategory` カラムが無い古いスキーマなら追加
@@ -1266,6 +1272,24 @@ export function upsertStaffMaster(rows: { staff_name: string; type: string; base
       active: r.active ?? 1, notes: r.notes ?? null,
     })
   })()
+}
+
+// ─── アプリ設定 (key-value)。BMログイン情報の保存に使用 ─────────────────────
+
+export function getSetting(key: string): string | null {
+  const db = getDB()
+  const row = db.prepare('SELECT value FROM app_settings WHERE key = ?').get(key) as
+    | { value: string }
+    | undefined
+  return row?.value ?? null
+}
+
+export function setSetting(key: string, value: string) {
+  const db = getDB()
+  db.prepare(`
+    INSERT INTO app_settings(key, value, updated_at) VALUES(?, ?, datetime('now'))
+    ON CONFLICT(key) DO UPDATE SET value=excluded.value, updated_at=datetime('now')
+  `).run(key, value)
 }
 
 export function savePLSnapshot(s: {
