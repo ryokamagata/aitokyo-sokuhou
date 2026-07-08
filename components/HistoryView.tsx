@@ -60,6 +60,32 @@ type StoreOpeningPlan = {
   seats: number
 }
 
+type NextYearMonthDetail = {
+  month: number
+  baseSales: number
+  grownSales: number
+  carryoverRevenue: number
+  newStoreRevenue: number
+  totalSales: number
+}
+
+type NextYearPlan = {
+  year: number
+  growthRate: number
+  growthRateSource: 'manual' | 'auto'
+  autoGrowthRate: number | null
+  manualGrowthRate: number | null
+  monthDetails: NextYearMonthDetail[]
+  plannedTotal: number
+  baseTotal: number
+  yoyGrowth: number | null
+  carryoverTotal: number
+  newStoreTotal: number
+  conservativeTotal: number
+  optimisticTotal: number
+  annualTarget: number | null
+}
+
 type HistoryData = {
   months: string[]
   latestMonth: string
@@ -73,6 +99,7 @@ type HistoryData = {
   staffSummary: StaffSummary[]
   annualSummaries: AnnualSummary[]
   projection: Projection | null
+  nextYearPlan?: NextYearPlan | null
   storeOpeningPlans?: StoreOpeningPlan[]
   seasonalIndex?: Record<number, number>
   storeProjections?: StoreProjectionData[]
@@ -437,6 +464,11 @@ function TotalHistory({ data, onRefresh }: { data: HistoryData; onRefresh: () =>
         staffSummary={data.staffSummary}
         totalMonthly={data.totalMonthly}
       />
+
+      {/* 来年計画 */}
+      {data.nextYearPlan && (
+        <NextYearPlanSection plan={data.nextYearPlan} onRefresh={onRefresh} />
+      )}
 
       {/* 出店計画 */}
       <StoreOpeningPlanSection
@@ -978,6 +1010,278 @@ function shortenStoreName(name: string): string {
     .replace('AITOKYO ', '')
     .replace("men's ", '')
     .replace('by AI TOKYO', '')
+}
+
+// ━━━ 来年計画 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+function NextYearPlanSection({ plan, onRefresh }: { plan: NextYearPlan; onRefresh: () => void }) {
+  const [growthValue, setGrowthValue] = useState('')
+  const [growthSaving, setGrowthSaving] = useState(false)
+  const [targetValue, setTargetValue] = useState('')
+  const [targetSaving, setTargetSaving] = useState(false)
+  const [targetSaved, setTargetSaved] = useState(false)
+
+  useEffect(() => {
+    if (plan.manualGrowthRate !== null) {
+      setGrowthValue(plan.manualGrowthRate.toFixed(1))
+    }
+  }, [plan.manualGrowthRate])
+
+  useEffect(() => {
+    if (plan.annualTarget) {
+      setTargetValue(plan.annualTarget.toLocaleString())
+    }
+  }, [plan.annualTarget])
+
+  const saveGrowthRate = async (rate: number | null) => {
+    setGrowthSaving(true)
+    try {
+      await fetch('/api/plan-assumption', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ year: plan.year, growth_rate: rate }),
+      })
+      if (rate === null) setGrowthValue('')
+      onRefresh()
+    } finally {
+      setGrowthSaving(false)
+    }
+  }
+
+  const handleGrowthSave = () => {
+    const pct = parseFloat(growthValue.replace(/[%\s+]/g, ''))
+    if (isNaN(pct)) return
+    saveGrowthRate(pct / 100)
+  }
+
+  const saveTarget = async () => {
+    const target = parseInt(targetValue.replace(/[,¥\s万億]/g, ''))
+    if (isNaN(target) || target <= 0) return
+
+    // 万を入力した場合の補正: 100未満なら億として、10000未満なら万として扱う
+    let finalTarget = target
+    if (target < 100) {
+      finalTarget = target * 100000000 // 億
+    } else if (target < 100000) {
+      finalTarget = target * 10000 // 万
+    }
+
+    setTargetSaving(true)
+    try {
+      await fetch('/api/annual-target', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ year: plan.year, target: finalTarget }),
+      })
+      setTargetSaved(true)
+      setTimeout(() => setTargetSaved(false), 2000)
+      onRefresh()
+    } finally {
+      setTargetSaving(false)
+    }
+  }
+
+  const maxSales = Math.max(...plan.monthDetails.map(m => m.totalSales), 1)
+
+  return (
+    <div className="bg-gradient-to-br from-purple-900/40 to-indigo-900/40 border border-purple-700/30 rounded-xl p-3 sm:p-4">
+      <div className="flex items-center gap-2 mb-3">
+        <p className="text-sm font-medium text-purple-300">{plan.year}年 計画（来年）</p>
+        <span className="text-[10px] bg-purple-800/50 text-purple-300 px-1.5 py-0.5 rounded">
+          今年着地見込み × 成長率 + 出店計画
+        </span>
+      </div>
+
+      {/* 年間目標入力 */}
+      <div className="flex flex-wrap items-center gap-1.5 sm:gap-2 mb-2 bg-gray-800/60 rounded-lg p-2">
+        <span className="text-xs text-yellow-400 whitespace-nowrap">{plan.year}年 目標</span>
+        <span className="text-xs text-gray-500">¥</span>
+        <input
+          type="text"
+          value={targetValue}
+          onChange={(e) => setTargetValue(e.target.value)}
+          onKeyDown={(e) => { if (e.key === 'Enter') saveTarget() }}
+          placeholder="12億 or 1,200,000,000"
+          className="bg-gray-700 border border-gray-600 rounded px-2 py-1 text-white text-xs
+                     w-36 focus:border-purple-400 focus:outline-none focus:ring-1 focus:ring-purple-400"
+        />
+        <button
+          onClick={saveTarget}
+          disabled={targetSaving}
+          className="bg-yellow-600 hover:bg-yellow-500 disabled:opacity-50 text-white text-xs
+                     px-2 py-1 rounded transition-colors whitespace-nowrap"
+        >
+          {targetSaving ? '保存中' : targetSaved ? '保存済み' : '保存'}
+        </button>
+        {plan.annualTarget && (
+          <span className="text-[10px] text-yellow-400/70 whitespace-nowrap">
+            現在: {formatOkuMan(plan.annualTarget)}
+          </span>
+        )}
+      </div>
+
+      {/* 成長率設定 */}
+      <div className="flex flex-wrap items-center gap-1.5 sm:gap-2 mb-3 bg-gray-800/60 rounded-lg p-2">
+        <span className="text-xs text-purple-300 whitespace-nowrap">既存店成長率</span>
+        <span className={`text-xs font-bold ${plan.growthRate >= 0 ? 'text-green-400' : 'text-red-400'}`}>
+          {plan.growthRate >= 0 ? '+' : ''}{plan.growthRate.toFixed(1)}%
+        </span>
+        <span className="text-[10px] text-gray-500">
+          {plan.growthRateSource === 'auto'
+            ? '（自動: 今年の完了月平均YoY）'
+            : `（手動設定${plan.autoGrowthRate !== null ? ` / 自動なら ${plan.autoGrowthRate >= 0 ? '+' : ''}${plan.autoGrowthRate.toFixed(1)}%` : ''}）`}
+        </span>
+        <div className="flex items-center gap-1 ml-auto">
+          <input
+            type="text"
+            value={growthValue}
+            onChange={(e) => setGrowthValue(e.target.value)}
+            onKeyDown={(e) => { if (e.key === 'Enter') handleGrowthSave() }}
+            placeholder="例: 8.0"
+            className="bg-gray-700 border border-gray-600 rounded px-2 py-1 text-white text-xs
+                       w-16 text-right focus:border-purple-400 focus:outline-none focus:ring-1 focus:ring-purple-400"
+          />
+          <span className="text-xs text-gray-500">%</span>
+          <button
+            onClick={handleGrowthSave}
+            disabled={growthSaving}
+            className="bg-purple-600 hover:bg-purple-500 disabled:opacity-50 text-white text-xs
+                       px-2 py-1 rounded transition-colors whitespace-nowrap"
+          >
+            {growthSaving ? '保存中' : '手動設定'}
+          </button>
+          {plan.growthRateSource === 'manual' && (
+            <button
+              onClick={() => saveGrowthRate(null)}
+              disabled={growthSaving}
+              className="bg-gray-700 hover:bg-gray-600 disabled:opacity-50 text-gray-300 text-xs
+                         px-2 py-1 rounded transition-colors whitespace-nowrap"
+            >
+              自動に戻す
+            </button>
+          )}
+        </div>
+      </div>
+
+      {/* 3パターン表示 */}
+      <div className="grid grid-cols-3 gap-1.5 sm:gap-2 mb-3">
+        <div className="bg-emerald-900/20 rounded-lg p-2 sm:p-3 text-center border border-emerald-700/30">
+          <p className="text-[10px] text-emerald-400 mb-0.5">高め見込み</p>
+          <p className="text-xs sm:text-sm font-bold text-emerald-400">{formatOkuMan(plan.optimisticTotal)}</p>
+          {plan.annualTarget && (
+            <p className={`text-[10px] mt-0.5 ${plan.optimisticTotal >= plan.annualTarget ? 'text-green-400' : 'text-red-400'}`}>
+              目標差 {plan.optimisticTotal >= plan.annualTarget ? '+' : ''}{formatOkuMan(plan.optimisticTotal - plan.annualTarget)}
+            </p>
+          )}
+        </div>
+        <div className="bg-purple-900/30 rounded-lg p-2 sm:p-3 text-center border border-purple-600/30">
+          <p className="text-[10px] text-purple-300 mb-0.5">計画</p>
+          <p className="text-xs sm:text-sm font-bold text-white">{formatOkuMan(plan.plannedTotal)}</p>
+          {plan.annualTarget && (
+            <p className={`text-[10px] mt-0.5 ${plan.plannedTotal >= plan.annualTarget ? 'text-green-400' : 'text-red-400'}`}>
+              目標差 {plan.plannedTotal >= plan.annualTarget ? '+' : ''}{formatOkuMan(plan.plannedTotal - plan.annualTarget)}
+            </p>
+          )}
+        </div>
+        <div className="bg-gray-800/60 rounded-lg p-2 sm:p-3 text-center border border-gray-700/50">
+          <p className="text-[10px] text-gray-400 mb-0.5">堅実ライン</p>
+          <p className="text-xs sm:text-sm font-bold text-gray-300">{formatOkuMan(plan.conservativeTotal)}</p>
+          {plan.annualTarget && (
+            <p className={`text-[10px] mt-0.5 ${plan.conservativeTotal >= plan.annualTarget ? 'text-green-400' : 'text-red-400'}`}>
+              目標差 {plan.conservativeTotal >= plan.annualTarget ? '+' : ''}{formatOkuMan(plan.conservativeTotal - plan.annualTarget)}
+            </p>
+          )}
+        </div>
+      </div>
+
+      {/* 月別内訳 */}
+      <div className="overflow-x-auto -mx-3 px-3 sm:mx-0 sm:px-0 mb-3">
+        <table className="w-full text-xs">
+          <thead>
+            <tr className="text-gray-500 border-b border-gray-700">
+              <th className="text-left py-2 px-1 sm:px-2">月</th>
+              <th className="text-right py-2 px-1 sm:px-2">計画売上</th>
+              <th className="text-right py-2 px-1 sm:px-2 hidden sm:table-cell">今年同月</th>
+              <th className="text-right py-2 px-1 sm:px-2">今年比</th>
+              <th className="text-right py-2 px-1 sm:px-2 hidden sm:table-cell">新店上乗せ</th>
+              <th className="py-2 px-1 sm:px-2 w-16 sm:w-24"></th>
+            </tr>
+          </thead>
+          <tbody>
+            {plan.monthDetails.map((d) => {
+              const yoy = d.baseSales > 0 ? ((d.totalSales - d.baseSales) / d.baseSales) * 100 : null
+              const newStore = d.carryoverRevenue + d.newStoreRevenue
+              const barPct = (d.totalSales / maxSales) * 100
+              return (
+                <tr key={d.month} className="border-b border-gray-700/50 hover:bg-gray-700/30">
+                  <td className="py-1.5 sm:py-2 px-1 sm:px-2 text-gray-300 font-medium whitespace-nowrap">{d.month}月</td>
+                  <td className="py-1.5 sm:py-2 px-1 sm:px-2 text-right font-bold text-purple-200 whitespace-nowrap">
+                    ¥{d.totalSales.toLocaleString()}
+                  </td>
+                  <td className="py-1.5 sm:py-2 px-1 sm:px-2 text-right text-gray-500 hidden sm:table-cell">
+                    {d.baseSales > 0 ? `¥${d.baseSales.toLocaleString()}` : '—'}
+                  </td>
+                  <td className="py-1.5 sm:py-2 px-1 sm:px-2 text-right">
+                    {yoy !== null ? (
+                      <span className={yoy >= 0 ? 'text-green-400' : 'text-red-400'}>
+                        {yoy >= 0 ? '+' : ''}{yoy.toFixed(1)}%
+                      </span>
+                    ) : (
+                      <span className="text-gray-600">—</span>
+                    )}
+                  </td>
+                  <td className="py-1.5 sm:py-2 px-1 sm:px-2 text-right hidden sm:table-cell">
+                    {newStore > 0 ? (
+                      <span className="text-purple-400">+¥{newStore.toLocaleString()}</span>
+                    ) : (
+                      <span className="text-gray-600">—</span>
+                    )}
+                  </td>
+                  <td className="py-1.5 sm:py-2 px-1 sm:px-2">
+                    <div className="w-full h-2 bg-gray-700 rounded-full overflow-hidden">
+                      <div className="h-full bg-purple-500/70 rounded-full" style={{ width: `${barPct}%` }} />
+                    </div>
+                  </td>
+                </tr>
+              )
+            })}
+            <tr className="border-t-2 border-gray-600 font-bold">
+              <td className="py-2 px-1 sm:px-2 text-yellow-400">年間合計</td>
+              <td className="py-2 px-1 sm:px-2 text-right text-yellow-400 whitespace-nowrap">¥{plan.plannedTotal.toLocaleString()}</td>
+              <td className="py-2 px-1 sm:px-2 text-right text-gray-400 hidden sm:table-cell">¥{plan.baseTotal.toLocaleString()}</td>
+              <td className="py-2 px-1 sm:px-2 text-right">
+                {plan.yoyGrowth !== null && (
+                  <span className={plan.yoyGrowth >= 0 ? 'text-green-400' : 'text-red-400'}>
+                    {plan.yoyGrowth >= 0 ? '+' : ''}{plan.yoyGrowth.toFixed(1)}%
+                  </span>
+                )}
+              </td>
+              <td className="py-2 px-1 sm:px-2 text-right text-purple-400 hidden sm:table-cell">
+                {plan.carryoverTotal + plan.newStoreTotal > 0
+                  ? `+¥${(plan.carryoverTotal + plan.newStoreTotal).toLocaleString()}`
+                  : '—'}
+              </td>
+              <td></td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+
+      {/* 根拠 */}
+      <div className="text-[10px] text-gray-500 space-y-0.5">
+        <p>各月 = 今年同月の着地見込み × (1 {plan.growthRate >= 0 ? '+' : '−'} {Math.abs(plan.growthRate).toFixed(1)}%) + 新店上乗せ</p>
+        {plan.carryoverTotal > 0 && (
+          <p>今年出店の新店: 立ち上がりカーブの継続分 +{formatOkuMan(plan.carryoverTotal)} を加算</p>
+        )}
+        {plan.newStoreTotal > 0 ? (
+          <p>{plan.year}年 出店計画: +{formatOkuMan(plan.newStoreTotal)}（下の「出店計画」で{plan.year}年分を登録・編集）</p>
+        ) : (
+          <p>{plan.year}年の出店計画は未登録（下の「出店計画」から{plan.year}年を選んで追加すると自動反映）</p>
+        )}
+        <p>高め見込み = 計画の105% / 堅実ライン = 計画の95%</p>
+      </div>
+    </div>
+  )
 }
 
 // ━━━ 出店計画 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━

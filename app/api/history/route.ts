@@ -6,6 +6,8 @@ import {
   getAnnualTarget,
   getStoreOpeningPlans,
   getStoreOpeningRevenue,
+  getStoreOpeningCarryover,
+  getPlanGrowthRate,
   getSeasonalIndex,
   getScrapedDailySales,
 } from '@/lib/db'
@@ -51,6 +53,33 @@ interface Projection {
   optimisticTotal: number               // 高め見込み（年間）
   annualTarget: number | null           // 年間目標
   newStoreTotal: number                 // 出店計画による年間上乗せ
+}
+
+// 来年計画の月別内訳
+interface NextYearMonthDetail {
+  month: number             // 1-12
+  baseSales: number         // 今年同月の実績/着地見込み
+  grownSales: number        // ベース × (1 + 成長率)
+  carryoverRevenue: number  // 今年出店の新店の立ち上がり継続分
+  newStoreRevenue: number   // 来年出店計画の上乗せ
+  totalSales: number        // 月合計
+}
+
+interface NextYearPlan {
+  year: number
+  growthRate: number                    // 採用した成長率 (%)
+  growthRateSource: 'manual' | 'auto'   // manual=手動設定 / auto=今年の完了月平均YoY
+  autoGrowthRate: number | null         // 自動計算値 (%)（手動設定時の参考表示用）
+  manualGrowthRate: number | null       // 手動設定値 (%)
+  monthDetails: NextYearMonthDetail[]
+  plannedTotal: number
+  baseTotal: number                     // 今年着地見込み合計
+  yoyGrowth: number | null              // 計画の今年比 (%)
+  carryoverTotal: number
+  newStoreTotal: number
+  conservativeTotal: number             // 計画の95%
+  optimisticTotal: number               // 計画の105%
+  annualTarget: number | null           // 来年の年間目標
 }
 
 export async function GET() {
@@ -552,6 +581,86 @@ export async function GET() {
     return results
   })()
 
+  // ━━━ 来年計画 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+  // ベース = 今年の月別着地見込み（実績 + 予測、今年出店分込み）
+  // 来年各月 = ベース × (1 + 成長率) + 今年新店の立ち上がり継続分 + 来年出店計画分
+  // 成長率: 手動設定があればそれを優先、なければ今年の完了月平均YoYを自動適用
+  let nextYearPlan: NextYearPlan | null = null
+  {
+    const nextYear = currentYear + 1
+    const baseSalesByMonth = new Map<number, number>()
+    let autoGrowth: number | null = null
+
+    if (projection) {
+      for (const d of projection.monthDetails) baseSalesByMonth.set(d.month, d.sales)
+      autoGrowth = projection.avgYoYGrowthRate !== null ? projection.avgYoYGrowthRate / 100 : null
+    } else {
+      // 今年が12ヶ月完了している場合は実績をベースにする
+      const currSummary = annualSummaries.find(s => s.year === currentYear && s.isComplete)
+      const prevSummary = annualSummaries.find(s => s.year === currentYear - 1 && s.isComplete)
+      if (currSummary) {
+        for (const d of currSummary.monthDetails) baseSalesByMonth.set(d.month, d.sales)
+        autoGrowth = prevSummary && prevSummary.total > 0
+          ? currSummary.total / prevSummary.total - 1
+          : null
+      }
+    }
+
+    if (baseSalesByMonth.size > 0) {
+      const manualGrowth = getPlanGrowthRate(nextYear)
+      const growth = manualGrowth ?? autoGrowth ?? 0
+
+      // 今年出店した新店の翌年持ち越し分
+      const carryover = getStoreOpeningCarryover(currentYear)
+      const carryoverByMonth: Record<number, number> = {}
+      let carryoverTotal = 0
+      for (const r of carryover) {
+        carryoverByMonth[r.month] = (carryoverByMonth[r.month] ?? 0) + r.revenue
+        carryoverTotal += r.revenue
+      }
+
+      // 来年の出店計画分
+      const nextOpening = getStoreOpeningRevenue(nextYear)
+      const nextOpeningByMonth: Record<number, number> = {}
+      let nextYearNewStoreTotal = 0
+      for (const r of nextOpening) {
+        nextOpeningByMonth[r.month] = (nextOpeningByMonth[r.month] ?? 0) + r.revenue
+        nextYearNewStoreTotal += r.revenue
+      }
+
+      const nextMonthDetails: NextYearMonthDetail[] = []
+      let plannedTotal = 0
+      let baseTotal = 0
+      for (let mo = 1; mo <= 12; mo++) {
+        const baseSales = baseSalesByMonth.get(mo) ?? 0
+        const grownSales = Math.round(baseSales * (1 + growth))
+        const carryoverRevenue = carryoverByMonth[mo] ?? 0
+        const newStoreRevenue = nextOpeningByMonth[mo] ?? 0
+        const totalSales = grownSales + carryoverRevenue + newStoreRevenue
+        nextMonthDetails.push({ month: mo, baseSales, grownSales, carryoverRevenue, newStoreRevenue, totalSales })
+        plannedTotal += totalSales
+        baseTotal += baseSales
+      }
+
+      nextYearPlan = {
+        year: nextYear,
+        growthRate: growth * 100,
+        growthRateSource: manualGrowth !== null ? 'manual' : 'auto',
+        autoGrowthRate: autoGrowth !== null ? autoGrowth * 100 : null,
+        manualGrowthRate: manualGrowth !== null ? manualGrowth * 100 : null,
+        monthDetails: nextMonthDetails,
+        plannedTotal,
+        baseTotal,
+        yoyGrowth: baseTotal > 0 ? ((plannedTotal - baseTotal) / baseTotal) * 100 : null,
+        carryoverTotal,
+        newStoreTotal: nextYearNewStoreTotal,
+        conservativeTotal: Math.round(plannedTotal * 0.95),
+        optimisticTotal: Math.round(plannedTotal * 1.05),
+        annualTarget: getAnnualTarget(nextYear),
+      }
+    }
+  }
+
   // 出店計画データ
   const storeOpeningPlans = getStoreOpeningPlans()
   const seasonalIndex = getSeasonalIndex(toYear)
@@ -569,6 +678,7 @@ export async function GET() {
     staffSummary,
     annualSummaries,
     projection,
+    nextYearPlan,
     storeOpeningPlans,
     seasonalIndex,
     storeProjections,

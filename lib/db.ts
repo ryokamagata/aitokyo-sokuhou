@@ -155,6 +155,12 @@ function runMigrations(db: Database.Database) {
       UNIQUE(year, store_name)
     );
 
+    CREATE TABLE IF NOT EXISTS plan_assumptions (
+      year        INTEGER PRIMARY KEY,
+      growth_rate REAL,
+      updated_at  TEXT NOT NULL DEFAULT (datetime('now'))
+    );
+
     CREATE TABLE IF NOT EXISTS store_daily_utilization (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       date TEXT NOT NULL,
@@ -562,6 +568,63 @@ export function getStoreOpeningRevenue(year: number): { month: number; revenue: 
   }
 
   return result
+}
+
+/**
+ * 前年に出店した新店の「翌年持ち越し分」を月別に算出。
+ * 翌年計画のベースは前年の月別着地見込み（立ち上がりカーブ途中の売上しか含まない）なので、
+ * カーブの伸び分（翌年時点のカーブ − 前年同月時点のカーブ）を上乗せする。
+ * 前年の開店月より前の月はベースが0のため、翌年はフル稼働分（100%）をまるごと加算。
+ * 季節変動は翌年ベース側（前年着地見込み）に織り込まれている前提で、ここではフラットなカーブで計算する。
+ */
+export function getStoreOpeningCarryover(prevYear: number): { month: number; revenue: number; storeName: string }[] {
+  const plans = getStoreOpeningPlans(prevYear)
+  const growthCurve = [0.30, 0.50, 0.70, 0.85, 0.95, 1.0]
+  const curveAt = (monthsOpen: number): number => {
+    if (monthsOpen < 0) return 0
+    return monthsOpen < growthCurve.length ? growthCurve[monthsOpen] : 1.0
+  }
+  const result: { month: number; revenue: number; storeName: string }[] = []
+
+  for (const plan of plans) {
+    for (let mo = 1; mo <= 12; mo++) {
+      const monthsOpenNextYear = (12 - plan.opening_month) + mo // 翌年mo月の営業月数 (0-indexed)
+      const monthsOpenPrevYear = mo - plan.opening_month        // 前年mo月の営業月数 (負なら未開店)
+      const delta = curveAt(monthsOpenNextYear) - curveAt(monthsOpenPrevYear)
+      if (delta > 0) {
+        result.push({
+          month: mo,
+          revenue: Math.round(plan.max_monthly_revenue * delta),
+          storeName: plan.store_name,
+        })
+      }
+    }
+  }
+
+  return result
+}
+
+// ─── 計画前提（来年計画の成長率など） ─────────────────────────────────────────
+
+/** 手動設定された計画成長率を取得（小数: 0.05 = +5%）。未設定なら null */
+export function getPlanGrowthRate(year: number): number | null {
+  const db = getDB()
+  const row = db.prepare('SELECT growth_rate FROM plan_assumptions WHERE year=?')
+    .get(year) as { growth_rate: number | null } | undefined
+  return row?.growth_rate ?? null
+}
+
+/** 計画成長率を設定。null を渡すと手動設定を解除（自動に戻す） */
+export function setPlanGrowthRate(year: number, growthRate: number | null) {
+  const db = getDB()
+  if (growthRate === null) {
+    db.prepare('DELETE FROM plan_assumptions WHERE year=?').run(year)
+    return
+  }
+  db.prepare(`
+    INSERT INTO plan_assumptions(year, growth_rate, updated_at) VALUES(?, ?, datetime('now'))
+    ON CONFLICT(year) DO UPDATE SET growth_rate=excluded.growth_rate, updated_at=datetime('now')
+  `).run(year, growthRate)
 }
 
 // ─── Scraped data functions ─────────────────────────────────────────────────
