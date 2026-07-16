@@ -100,13 +100,34 @@ export function getBmCredentials(): { loginId: string; password: string } {
 }
 
 // POST login - BM returns 302 on success, 200 (login page) on failure
-async function postLogin(loginId: string, password: string): Promise<Response> {
-  return fetch(`${BM_BASE}/groupmanage/login/`, {
+// BMはログインページで発行されるセッションCookie + login_token(CSRF)が必須。
+// 先にGETでトークンとCookieを取得してからPOSTする
+async function postLogin(
+  loginId: string,
+  password: string
+): Promise<{ response: Response; cookies: Cookies }> {
+  const pageRes = await fetch(`${BM_BASE}/groupmanage/login/`, { redirect: 'manual' })
+  const preCookies = cookiesFromResponse(pageRes)
+  const pageHtml = await pageRes.text()
+  const tokenMatch = pageHtml.match(/name="login_token"\s+value="([^"]+)"/)
+  if (!tokenMatch) {
+    throw new Error('BM login failed: login_token が取得できませんでした（BM側の仕様変更の可能性）')
+  }
+
+  const response = await fetch(`${BM_BASE}/groupmanage/login/`, {
     method: 'POST',
-    headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-    body: new URLSearchParams({ login_id: loginId, password }).toString(),
+    headers: {
+      'Content-Type': 'application/x-www-form-urlencoded',
+      Cookie: cookieHeader(preCookies),
+    },
+    body: new URLSearchParams({
+      login_id: loginId,
+      password,
+      login_token: tokenMatch[1],
+    }).toString(),
     redirect: 'manual',
   })
+  return { response, cookies: mergeCookies(preCookies, cookiesFromResponse(response)) }
 }
 
 // 保存前の接続テスト用。実際にBMへログインして認証情報を検証する
@@ -114,7 +135,12 @@ export async function verifyBmLogin(
   loginId: string,
   password: string
 ): Promise<{ ok: boolean; error?: string }> {
-  const res = await postLogin(loginId, password)
+  let res: Response
+  try {
+    res = (await postLogin(loginId, password)).response
+  } catch (e) {
+    return { ok: false, error: e instanceof Error ? e.message : String(e) }
+  }
   if (res.status === 302) return { ok: true }
   const html = await res.text()
   const errMatch = html.match(/<div class="error">([^<]+)</)
@@ -124,7 +150,7 @@ export async function verifyBmLogin(
 async function loginGroup(): Promise<Cookies> {
   const { loginId, password } = getBmCredentials()
 
-  const res = await postLogin(loginId, password)
+  const { response: res, cookies } = await postLogin(loginId, password)
 
   if (res.status !== 302) {
     // Login page returned instead of redirect = credentials rejected
@@ -133,8 +159,6 @@ async function loginGroup(): Promise<Cookies> {
     const errMsg = errMatch ? errMatch[1] : 'ログインに失敗しました'
     throw new Error(`BM login failed: ${errMsg}`)
   }
-
-  const cookies = cookiesFromResponse(res)
   const loc = res.headers.get('location') ?? `${BM_BASE}/groupmanage/top`
   const nextUrl = loc.startsWith('http') ? loc : `${BM_BASE}${loc}`
 
